@@ -19,6 +19,7 @@
         {from: "hw/ip/i2c",     to: "ip/i2c", patch_dir: "i2c"},
         {from: "hw/ip/tlul",    to: "ip/tlul", patch_dir: "tlul"},
         {from: "hw/ip/uart",    to: "ip/uart", patch_dir: "uart"},
+        {from: "hw/ip/usbdev",  to: "ip/usbdev", patch_dir: "usbdev"},
 
         {from: "hw/top_earlgrey/top_pkg.core",   to: "ip/top_pkg/top_pkg.core"},
         {from: "hw/top_earlgrey/rtl/top_pkg.sv", to: "ip/top_pkg/rtl/top_pkg.sv"},
