@@ -533,7 +533,8 @@ module sonata_system #(
 
   logic cheri_en;
 
-  assign cheri_en = 1'b1;
+assign cheri_en = 1'b0;
+//  assign cheri_en = 1'b1;
   assign cheri_en_o = cheri_en;
   assign rst_core_n = rst_sys_ni & ~ndmreset_req & ~host_req[DbgHost];
 

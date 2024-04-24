@@ -60,7 +60,12 @@ module top_sonata (
   input  logic       tck_i,
   input  logic       tms_i,
   input  logic       td_i,
-  output logic       td_o
+  output logic       td_o,
+
+  // USB monitoring (logic analyzer attachment).
+  output logic       usbmon_vbus,
+  output logic       usbmon_dp,
+  output logic       usbmon_dm
 );
   // System clock frequency.
   parameter int SysClkFreq = 25_000_000;
@@ -111,6 +116,34 @@ module top_sonata (
 
   assign scl1 = scl1_oe ? scl1_o : 1'bZ;
   assign sda1 = sda1_oe ? sda1_o : 1'bZ;
+
+  // USB monitoring; run the input signals through a couple of flops for metastability
+  // avoidance, and delay the outbound traffic by the same number of cycles before using
+  // the delayed output enable to switch cleanly at 48MHz.
+  logic usrusb_vbus_q,  usrusb_v_p_q,  usrusb_v_n_q;
+  logic usrusb_vbus_qq, usrusb_v_p_qq, usrusb_v_n_qq;
+  logic usrusb_oe_q,    usrusb_vpo_q,  usrusb_vmo_q;
+  logic usrusb_oe_qq,   usrusb_vpo_qq, usrusb_vmo_qq;
+
+  always_ff @(posedge clk_usb or negedge rst_usb_n) begin
+    if (!rst_usb_n) begin
+      {usrusb_vbus_q,  usrusb_v_p_q,  usrusb_v_n_q } <= 'b0;
+      {usrusb_vbus_qq, usrusb_v_p_qq, usrusb_v_n_qq} <= 'b0;
+      {usrusb_oe_q,    usrusb_vpo_q,  usrusb_vmo_q } <= 'b0;
+      {usrusb_oe_qq,   usrusb_vpo_qq, usrusb_vmo_qq} <= 'b0;
+    end else begin
+      // Inputs from differential receiver.
+      {usrusb_vbus_q,  usrusb_v_p_q,  usrusb_v_n_q } <= {usrusb_vbusdetect, usrusb_v_p, usrusb_v_n};
+      {usrusb_vbus_qq, usrusb_v_p_qq, usrusb_v_n_qq} <= {usrusb_vbus_q, usrusb_v_p_q, usrusb_v_n_q};
+      // Outputs from USB device.
+      {usrusb_oe_q,    usrusb_vpo_q,  usrusb_vmo_q } <= {dp_en_d2p,   usrusb_vpo,   usrusb_vmo};
+      {usrusb_oe_qq,   usrusb_vpo_qq, usrusb_vmo_qq} <= {usrusb_oe_q, usrusb_vpo_q, usrusb_vmo_q};
+    end
+  end
+  // USB monitor signals to logic analyzer.
+  assign usbmon_vbus = usrusb_vbus_qq;
+  assign usbmon_dp   = usrusb_oe_qq ? usrusb_vpo_qq : usrusb_v_p_qq;
+  assign usbmon_dm   = usrusb_oe_qq ? usrusb_vmo_qq : usrusb_v_n_qq;
 
   sonata_system #(
     .GpiWidth     ( 13           ),

@@ -137,6 +137,11 @@ set_property -dict { PACKAGE_PIN D18 IOSTANDARD LVCMOS33 } [get_ports ser0_rx];
 # set_property -dict { PACKAGE_PIN V1 IOSTANDARD LVCMOS33 } [get_ports sda0];
 # set_property -dict { PACKAGE_PIN U2 IOSTANDARD LVCMOS33 } [get_ports scl0];
 
+# USB monitor (using pins 36,38 and 40 of R-Pi header
+set_property -dict { PACKAGE_PIN T9  IOSTANDARD LVCMOS33 } [get_ports usbmon_dm];
+set_property -dict { PACKAGE_PIN T10 IOSTANDARD LVCMOS33 } [get_ports usbmon_dp];
+set_property -dict { PACKAGE_PIN V11 IOSTANDARD LVCMOS33 } [get_ports usbmon_vbus];
+
 # R-Pi Header
 
 # GPIO/I2C bus
