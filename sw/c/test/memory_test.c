@@ -14,21 +14,32 @@
 #include "timer.h"
 
 #define TEST_DATA (0xDEADFEEF)
-#define TEST_SIZE (5)
+//#define TEST_SIZE (5)
+#define TEST_SIZE ((224*1024)/4)
 
 int test_array[TEST_SIZE];
 
 int pass() {
+  puts("Passed");
+
   while(true);
   return 0;
 }
 
 int fail() {
+  puts("Failed");
+
   while(true);
   return -1;
 }
 
 int main(void) {
+  uart_init(DEFAULT_UART);
+
+  putstr("memory_test running...");
+  puthex(TEST_SIZE * 4);
+  puts(" bytes");
+
   // RAM test
   for (int i = 0; i < TEST_SIZE; i++) {
     // Write data

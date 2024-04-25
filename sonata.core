@@ -63,7 +63,8 @@ parameters:
   SRAMInitFile:
     datatype: str
     description: SRAM initialization file in vmem hex format
-    default: "../../../../sw/c/build/demo/hello_usb/hello_usb.vmem"
+    default: "../../../../sw/c/build/test/memory_test.vmem"
+#    default: "../../../../sw/c/build/demo/hello_usb/hello_usb.vmem"
 #    default: "../../../../../sw/cpp/cheri_sanity/cpu0_irom.vmem"
     paramtype: vlogparam
 
