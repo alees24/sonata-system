@@ -84,6 +84,7 @@ module ram_2p #(
 
   prim_ram_2p #(
     .Width(Width),
+    .DataBitsPerMask(8),
     .Depth(Depth),
     .MemInitFile(MemInitFile)
   ) u_ram (
