@@ -17,6 +17,9 @@ module top_sonata (
   input  logic [4:0] navSw,
   input  logic [7:0] usrSw,
 
+  // External joystick is connected through PMOD1
+  input  logic [7:0] pmod1,
+
   output logic       lcd_rst,
   output logic       lcd_dc,
   output logic       lcd_copi,
@@ -138,6 +141,13 @@ module top_sonata (
   logic pll_locked;
   logic rst_btn;
 
+  // External navigation joystick
+  wire  [4:0] ext_navSw = {pmod1[2] & pmod1[6],   // UP (Grey)
+                           pmod1[1] & pmod1[5],   // RIGHT (Purple)
+                           1'b1,  // No activation switch on external joystick.
+                           pmod1[0] & pmod1[4],   // LEFT (Blue)
+                           pmod1[3] & pmod1[7]};  // DOWN (White)
+
   logic [4:0] nav_sw_n;
   logic [7:0] user_sw_n;
 
@@ -145,7 +155,7 @@ module top_sonata (
 
   // Switch inputs have pull-ups and switches pull to ground when on. Invert here so CPU sees 1 for
   // on and 0 for off.
-  assign nav_sw_n = ~navSw;
+  assign nav_sw_n = ~(navSw & ext_navSw);
   assign user_sw_n = ~usrSw;
 
   assign usrusb_spd = 1'b1;  // Full Speed operation.
