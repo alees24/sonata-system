@@ -31,10 +31,5 @@ extern "C" void entry_point(void *rwRoot)
 
   uart->init(BAUD_RATE);
   write(uart, "Hello There!\r\n");
-
-  char ch = '\n';
-  while (true) {
-    ch = uart->blocking_read();
-    uart->blocking_write(ch);
-  }
+  while (true);
 }
