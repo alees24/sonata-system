@@ -33,6 +33,8 @@ filesets:
       - dv/verilator/sonata_system.cc: { file_type: cppSource }
       - dv/verilator/sonata_system.h:  { file_type: cppSource, is_include_file: true}
       - dv/verilator/sonata_system_main.cc: { file_type: cppSource }
+      - dv/verilator/spidpi.sv: { file_type: systemVerilogSource }
+      - dv/verilator/spidpi.cc: { file_type: cppSource }
       - dv/verilator/sonata_verilator_lint.vlt:  { file_type: vlt }
 
   files_constraints_sonata:

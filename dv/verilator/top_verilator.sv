@@ -23,7 +23,7 @@ module top_verilator #(
 );
   localparam ClockFrequency = 30_000_000;
   localparam BaudRate       = 921_600;
-  localparam EnableCHERI    = 1'b1;
+  localparam EnableCHERI    = 1'b0;
 
   logic uart_sys_rx, uart_sys_tx;
 
@@ -78,6 +78,10 @@ module top_verilator #(
   wire usb_dp_pullup; // D+ pullup enable.
   wire usb_dn_pullup; // D- pullup enable.
 
+  // SPI interface to LCD.
+  wire spi_lcd_sck;
+  wire spi_lcd_tx;
+
   // Instantiating the Sonata System.
   sonata_system #(
     .DisableHyperram(DisableHyperram)
@@ -130,9 +134,9 @@ module top_verilator #(
     .spi_flash_tx_o ( ),
     .spi_flash_sck_o( ),
 
-    .spi_lcd_rx_i (0),
-    .spi_lcd_tx_o ( ),
-    .spi_lcd_sck_o( ),
+    .spi_lcd_rx_i   (0),
+    .spi_lcd_tx_o   (spi_lcd_tx),
+    .spi_lcd_sck_o  (spi_lcd_sck),
 
     .spi_eth_rx_i  (0),
     .spi_eth_tx_o  ( ),
@@ -254,5 +258,12 @@ module top_verilator #(
     // Pullup enables from the USB device.
     .pullupdp_d2p    (usb_dp_pullup),
     .pullupdn_d2p    (usb_dn_pullup)
+  );
+
+  // SPI connection to LCD.
+  spidpi u_spidpi (
+    .sck          (spi_lcd_sck),
+    .copi         (spi_lcd_tx),
+    .cipo         ()
   );
 endmodule
