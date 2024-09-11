@@ -3,9 +3,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // This is the top level that connects the system to the virtual devices.
-module top_verilator (input logic clk_i, rst_ni);
-  parameter bit DisableHyperram = 1'b0;
+module top_verilator #(
+  // Eliminate any form of HyperRAM from the system and operate only from the (larger) SRAM?
+  parameter bit DisableHyperram = 1'b0,
 
+  // Employed separated clocks in simulation; this provides a much more accurate simulation of
+  // the FPGA implementation but at the cost of increased simulation time.
+  parameter bit pSeparatedClocks = 1'b1
+) (
+  // System clocks,
+  input logic clk_sys_i,
+  input logic rst_ni,
+
+  // Supplementary clocks, used iff separated clocks are employed.
+  input logic clk_usb_i,
+  input logic clk_hr_i,
+  input logic clk_hr90p_i,
+  input logic clk_hr3x_i
+);
   localparam ClockFrequency = 30_000_000;
   localparam BaudRate       = 921_600;
   localparam EnableCHERI    = 1'b1;
@@ -31,8 +46,13 @@ module top_verilator (input logic clk_i, rst_ni);
                    scl1_o, scl1_oe, sda1_o, sda1_oe,
                    uart_aux_tx};
 
-  // Simplified clocking scheme for simulations.
-  wire clk_usb   = clk_i;
+  // Typically a simplified clocking scheme is used for simulations, in which all of the logic runs
+  // from a single clock.
+  wire clk_usb   = pSeparatedClocks ? clk_usb_i   : clk_sys_i;
+  wire clk_hr    = pSeparatedClocks ? clk_hr_i    : clk_sys_i;
+  wire clk_hr90p = pSeparatedClocks ? clk_hr90p_i : clk_sys_i;
+  wire clk_hr3x  = pSeparatedClocks ? clk_hr3x_i  : clk_sys_i;
+  // Reset for USB device.
   wire rst_usb_n = rst_ni;
 
   // In Verilator simulation where tri-stated drivers, pullups/pulldowns and drive strengths are
@@ -63,17 +83,17 @@ module top_verilator (input logic clk_i, rst_ni);
     .DisableHyperram(DisableHyperram)
   ) u_sonata_system (
     // Main system clock and reset
-    .clk_sys_i      (clk_i),
+    .clk_sys_i      (clk_sys_i),
     .rst_sys_ni     (rst_ni),
 
     // USB device clock and reset
     .clk_usb_i      (clk_usb),
     .rst_usb_ni     (rst_usb_n),
 
-    // SRAM model used for hyperram so no hyperram clock is provided
-    .clk_hr_i   (1'b0),
-    .clk_hr90p_i(1'b0),
-    .clk_hr3x_i (1'b0),
+    // Hyperram clocks
+    .clk_hr_i       (clk_hr),
+    .clk_hr90p_i    (clk_hr90p),
+    .clk_hr3x_i     (clk_hr3x),
 
     .gp_i     (0),
     .gp_o     ( ),
@@ -196,11 +216,11 @@ module top_verilator (input logic clk_i, rst_ni);
     .BAUD ( BaudRate       ),
     .FREQ ( ClockFrequency )
   ) u_uartdpi (
-    .clk_i,
-    .rst_ni,
-    .active(1'b1       ),
-    .tx_o  (uart_sys_rx),
-    .rx_i  (uart_sys_tx)
+    .clk_i  (clk_sys_i  ),
+    .rst_ni (rst_ni     ),
+    .active (1'b1       ),
+    .tx_o   (uart_sys_rx),
+    .rx_i   (uart_sys_tx)
   );
 
   // USB DPI; simulated USB host.

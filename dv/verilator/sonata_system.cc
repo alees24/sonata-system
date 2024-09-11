@@ -38,12 +38,58 @@ int SonataSystem::Main(int argc, char **argv) {
 int SonataSystem::Setup(int argc, char **argv, bool &exit_app) {
   VerilatorSimCtrl &simctrl = VerilatorSimCtrl::GetInstance();
 
-  simctrl.SetTop(&_top, &_top.clk_i, &_top.rst_ni,
+  // Just a single reset signal for all clock domains.
+  simctrl.SetTop(&_top, &_top.rst_ni,
                  VerilatorSimCtrlFlags::ResetPolarityNegative);
 
   _memutil.RegisterMemoryArea("ram", 0x100000, &_ram);
   _memutil.RegisterMemoryArea("hyperram", 0x40000000, &_hyperram);
   simctrl.RegisterExtension(&_memutil);
+
+  // Create our clocks with their default properties.
+  //
+  // 30MHz System Clock, no jitter.
+  // 48MHz USB Clock, no jitter.
+  // 100MHz HyperRAM clocks, no jitter.
+  // 300MHz HyperRAM clock, no jitter.
+  //
+  // All times are in picoseconds for greater accuracy.
+  const uint32_t nano = 1000u;  // in ps.
+  const uint32_t micro = 1000u * nano;
+  const uint32_t milli = 1000u * micro;
+  const uint32_t sys_hperiod = micro / 60u;  // 30MHz cycle
+
+  uint32_t usb_hperiod  = micro / 96u;   // 48MHz cycle
+  uint32_t hr_hperiod   = micro / 200u;  // 100MHz cycle
+  uint32_t hr3x_hperiod = micro / 600u;  // 300MHz cycle
+
+  // The HyperRAM requires a clock that is phase-shifted by 90 degress.
+  uint32_t hr90p_offset = hr_hperiod / 2;
+
+  // TODO: pick up command line parameters to override clock settings
+  for (int i = 1; i < argc; ++i) {
+    if (!strcmp(argv[i], "override_clks")) {
+      // Set clocks back to their previous behavior.
+      usb_hperiod = sys_hperiod;
+      hr_hperiod = sys_hperiod;
+      hr3x_hperiod = sys_hperiod;
+      hr90p_offset = 0u;
+    }
+  }
+
+  // Main system clock must be added first.
+  VerilatorSimClock clk_sys(&_top.clk_sys_i, sys_hperiod, sys_hperiod);
+  // Supplementary clocks.
+  VerilatorSimClock clk_usb(&_top.clk_usb_i, usb_hperiod, usb_hperiod);
+  VerilatorSimClock clk_hr(&_top.clk_hr_i, hr_hperiod, hr_hperiod);
+  VerilatorSimClock clk_hr90p(&_top.clk_hr90p_i, hr_hperiod, hr_hperiod, hr90p_offset);
+  VerilatorSimClock clk_hr3x(&_top.clk_hr3x_i, hr3x_hperiod, hr3x_hperiod);
+
+  simctrl.AddClock(clk_sys);
+  simctrl.AddClock(clk_usb);
+  simctrl.AddClock(clk_hr);
+  simctrl.AddClock(clk_hr90p);
+  simctrl.AddClock(clk_hr3x);
 
   exit_app = false;
   return simctrl.ParseCommandArgs(argc, argv, exit_app);
