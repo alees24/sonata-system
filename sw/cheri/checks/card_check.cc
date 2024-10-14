@@ -46,10 +46,9 @@ static void send_command(Capability<volatile SonataSpi> &spi, uint8_t cmdCode, u
 //  write_hex8b(uart, cmdCode);
 //  write_str(uart, "\r\n");
 
-// TODO: Do we need this?
+  // Apparently we need to clock 8 times before sending the command.
   uint8_t dummy = 0xffu;
   spi->blocking_write(&dummy, 1u);
-  spi->wait_idle();
 
   cmd[0] = 0x40u | cmdCode;
   cmd[1] = (uint8_t)(arg >> 24);
@@ -298,19 +297,23 @@ static void read_block(Capability<volatile SonataSpi> &spi, uint32_t block, uint
       uint32_t bytes_tx = 0u;
       uint32_t bytes_rx = 0u;
       while (bytes_tx < BLOCK_LEN || bytes_rx < BLOCK_LEN) {
-			  unsigned transmitAvailable = 8 - (spi1->status & SonataSpi::StatusTxFifoLevel);
-        while (bytes_tx < BLOCK_LEN && transmitAvailable-- > 0) {
+			  unsigned bytesToTransmit = 8 - (spi1->status & SonataSpi::StatusTxFifoLevel);
+        if (bytesToTransmit > BLOCK_LEN - bytes_tx) {
+           bytesToTransmit = BLOCK_LEN - bytes_tx;
+        }
+        bytes_tx += bytesToTransmit;
+
+        // TODO: unroll loop and perhaps introduce word-width FIFO reads/writes
+        // to the SPI controller.
+        while (bytesToTransmit-- > 0) {
           spi1->transmitFifo = dataBuffer[rdOffset++];
-          bytes_tx++;
         }
-        while (bytes_rx < BLOCK_LEN && (spi->status & SonataSpi::StatusRxFifoLevel)) {
+
+        unsigned bytesToReceive = (spi->status & SonataSpi::StatusRxFifoLevel) >> 8;
+        bytes_rx += bytesToReceive;
+        while (bytesToReceive-- > 0) {
           dataBuffer[wrOffset++] = spi->receiveFifo;
-          bytes_rx++;
         }
-//write_hex(uart, bytes_tx);
-//write_str(uart, " : ");
-//write_hex(uart, bytes_rx);
-//write_str(uart, "\r\n");
       }
 
       // Complete the card read.
