@@ -6,8 +6,9 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#include "spi_lcd.hh"
 #include "spi_flash.hh"
+#include "spi_lcd.hh"
+#include "spi_microsd.hh"
 
 void spidpi::reset() {
   // Write data to device (COPI).
@@ -81,6 +82,9 @@ void *spidpi_create(const char *id,      // Bus identification.
     ctx = new spi_flash(dataW, oobInW, oobOutW);
   } else if (!strcmp(id, "lcd")) {
     ctx = new spi_lcd(dataW, oobInW, oobOutW);
+  } else if (!strcmp(id, "microsd")) {
+    // TODO: enable logging for now.
+    ctx = new spi_microsd(dataW, oobInW, oobOutW, true);
   } else {
     ctx = new spidpi(dataW, oobInW, oobOutW, true);
     ctx->logText("Warning: SPI bus '%s' not recognised", id);

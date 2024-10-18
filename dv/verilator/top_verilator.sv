@@ -88,6 +88,13 @@ module top_verilator (input logic clk_i, rst_ni);
   wire appspi_d3; // HOLD_N or RESET_N
   wire appspi_cs; // Chip select negated
 
+  // microSD card interface.
+  wire microsd_clk;  // SPI mode: SCLK
+  wire microsd_dat0; // SPI mode: CIPO
+  wire microsd_dat3; // SPI mode: CS_N
+  wire microsd_cmd;  // SPI mode: COPI
+  wire microsd_det;  // Card detection (0 = present).
+
   // Tie flash wp_n and hold_n to 1 as they're active low and we don't need either signal
   assign appspi_d2 = 1'b1;
   assign appspi_d3 = 1'b1;
@@ -112,12 +119,10 @@ module top_verilator (input logic clk_i, rst_ni);
   wire ethmac_rst, ethmac_cs;
   // User LEDs.
   wire [7:0] usrLed;
-  // MicroSD card slot
-  wire microsd_dat3;
   // None of these signals is used presently.
   wire unused_io_ = ^{mb0, mb1, ah_tmpio10, rph_g18, rph_g17,
                       rph_g16_ce2, rph_g8_ce0, rph_g7_ce1, ethmac_rst, ethmac_cs,
-                      usrLed, microsd_dat3};
+                      usrLed, appspi_d1};
 
   // Reporting of CHERI enable/disable and any exceptions that occur.
   wire  [CheriErrWidth-1:0] cheri_err;
@@ -169,11 +174,14 @@ module top_verilator (input logic clk_i, rst_ni);
   logic [SPI_CS_NUM-1:0] spi_cs [SPI_NUM];
   logic                  spi_sck[SPI_NUM];
 
-  assign spi_rx[0] = appspi_d1;
+//  assign spi_rx[0] = appspi_d1;
   assign appspi_d0 = spi_tx[0];
   assign lcd_copi = spi_tx[1];
   assign appspi_clk = spi_sck[0];
   assign lcd_clk = spi_sck[1];
+
+  tlul_pkg::tl_h2d_t tl_pinmux_h2d;
+  tlul_pkg::tl_d2h_t tl_pinmux_d2h;
 
   // Stub of pinmux to make sure it keeps compiling.
   pinmux u_pinmux (
@@ -188,9 +196,9 @@ module top_verilator (input logic clk_i, rst_ni);
     .i2c_sda_i('{default: '0}),
     .i2c_sda_en_i('{default: '0}),
     .i2c_sda_o(),
-    .spi_sck_i('{default: '0}),
-    .spi_tx_i('{default: '0}),
-    .spi_rx_o(),
+    .spi_sck_i(spi_sck),
+    .spi_tx_i(spi_tx),
+    .spi_rx_o(spi_rx),
     .gpio_ios_i('{default: '0}),
     .gpio_ios_en_i('{default: '0}),
     .gpio_ios_o(),
@@ -268,11 +276,12 @@ module top_verilator (input logic clk_i, rst_ni);
     .mb8(),
     .pmod0(),
     .pmod1(),
-    .microsd_clk(),
-    .microsd_dat0(),
-    .microsd_cmd(),
-    .tl_i(tlul_pkg::TL_H2D_DEFAULT),
-    .tl_o()
+    .microsd_clk,
+    .microsd_dat0,
+    .microsd_cmd,
+
+    .tl_i (tl_pinmux_h2d),
+    .tl_o (tl_pinmux_d2h)
   );
 
   // SPI CS outputs from GPIO pins; these are scheduled to be dropped but they are still required
@@ -325,7 +334,11 @@ module top_verilator (input logic clk_i, rst_ni);
     .clk_hr3x_i     (1'b0),
     .rst_hr_ni      (rst_hr_n),
 
-    .gp_i           (0),
+    .gp_i           ({14'b0,
+                      microsd_det,
+                      4'b0,
+                      {13{1'b1}}
+                     }),
     .gp_o           ({
                       unused_gp_o,
                       mb0, // mikroBUS Click reset
@@ -409,8 +422,8 @@ module top_verilator (input logic clk_i, rst_ni);
     .hyperram_nrst(),
     .hyperram_cs  (),
 
-    .tl_pinmux_o (),
-    .tl_pinmux_i (tlul_pkg::TL_D2H_DEFAULT)
+    .tl_pinmux_o (tl_pinmux_h2d),
+    .tl_pinmux_i (tl_pinmux_d2h)
   );
 
   // I2C 0 DPI
@@ -526,6 +539,24 @@ module top_verilator (input logic clk_i, rst_ni);
     .oob_out  ( )  // not used.
   );
 
+  // SPI connection to microSD card.
+  spidpi #(
+    .ID       ("microsd"),
+    .NDevices (1),
+    .DataW    (1),
+    .OOB_InW  (1),
+    .OOB_OutW (1)
+  ) u_spidpi_microsd (
+    .rst_ni   (rst_ni),
+
+    .sck      (microsd_clk),
+    .cs       (microsd_dat3),
+    .copi     (microsd_cmd),
+    .cipo     (microsd_dat0),
+
+    .oob_in   ( ),
+    .oob_out  (microsd_det)
+  );
 
   export "DPI-C" function mhpmcounter_get;
 

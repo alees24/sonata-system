@@ -192,9 +192,9 @@ module spi_core #(
         data_in_ready_o = 1'b1;
       end else begin
         if (msb_first_i) begin
-          copi_shift_d = {copi_shift_q[6:0], 1'b0};
+          copi_shift_d = {copi_shift_q[6:0], 1'b1};
         end else begin
-          copi_shift_d = {1'b0, copi_shift_q[7:1]};
+          copi_shift_d = {1'b1, copi_shift_q[7:1]};
         end
       end
     end
