@@ -122,7 +122,9 @@ module sonata_system
   output wire                      hyperram_cs,
 
   output tlul_pkg::tl_h2d_t        tl_pinmux_o,
-  input  tlul_pkg::tl_d2h_t        tl_pinmux_i
+  input  tlul_pkg::tl_d2h_t        tl_pinmux_i,
+
+  output logic [3:0]               strace_o
 );
 
   ///////////////////////////////////////////////
@@ -1173,6 +1175,67 @@ module sonata_system
     .tl_o   (tl_rgbled_ctrl_d2h),
 
     .rgbled_dout_o
+  );
+
+  // TODO: Tap onto the GPIO device port for now.
+  wire strace_cfg_re = device_req[Gpio] & !device_we[Gpio] & device_addr[Gpio][4];
+  wire strace_cfg_we = device_req[Gpio] &  device_we[Gpio] & device_addr[Gpio][4];
+  wire [3:0]  strace_cfg_addr = device_addr[Gpio][3:0];
+  wire [31:0] strace_cfg_wdata = device_wdata[Gpio];
+
+  // Collect the I2C buses and SPI buses.
+  logic [sonata_pkg::I2C_NUM-1:0] strace_i2c_scl;
+  logic [sonata_pkg::I2C_NUM-1:0] strace_i2c_sda;
+  logic [sonata_pkg::SPI_NUM-1:0] strace_spi_sck;
+  logic [sonata_pkg::SPI_NUM-1:0] strace_spi_cs;
+  logic [sonata_pkg::SPI_NUM-1:0] strace_spi_copi;
+  logic [sonata_pkg::SPI_NUM-1:0] strace_spi_cipo;
+  always_comb begin
+    for (integer i = 0; i < sonata_pkg::I2C_NUM; i++) begin
+      strace_i2c_scl[i] = !i2c_scl_i[i];
+      strace_i2c_sda[i] = !i2c_sda_i[i];
+    end
+    for (integer i = 0; i < sonata_pkg::SPI_NUM; i++) begin
+      strace_spi_sck[i]  = spi_sck_o[i];
+      // TODO: Use CS 3 from each controller because we're interested in microSD presently.
+      strace_spi_cs[i]   = spi_cs_o[i][3];
+      strace_spi_copi[i] = spi_tx_o[i];
+      strace_spi_cipo[i] = spi_rx_i[i];
+    end
+  end
+
+  // Sonata Trace port.
+  strace_top #(
+    .I2C_NUM  (sonata_pkg::I2C_NUM),
+    .SPI_NUM  (sonata_pkg::SPI_NUM)
+  ) u_strace(
+    .clk_i      (clk_sys_i),
+    .rst_ni     (rst_sys_ni),
+
+    // Configuration interface.
+    .cfg_re     (strace_cfg_re),
+    .cfg_we     (strace_cfg_we),
+    .cfg_addr   (strace_cfg_addr),
+    .cfg_wdata  (strace_cfg_wdata),
+    // TODO: make read data available; presently not done because of GPIO tap.
+    .cfg_rdata  (),
+
+    // I2C bus(es).
+    // TODO: This shows only the transmitted traffic at present; we should perhaps absorb both
+    // sets of signals and combine after the retiming, with maybe some glitch suppression?
+    .i2c_scl    (strace_i2c_scl),
+    .i2c_sda    (strace_i2c_sda),
+
+    // SPI bus(es).
+    .spi_cs     (strace_spi_cs),
+    .spi_sck    (strace_spi_sck),
+    .spi_copi   (strace_spi_copi),
+    .spi_cipo   (strace_spi_cipo),
+
+    // TL-UL activity.
+    .tlul_trace (4'h0),
+
+    .strace_o   (strace_o)
   );
 
   // Debug module top.

@@ -169,6 +169,9 @@ module top_verilator (input logic clk_i, rst_ni);
     end
   end
 
+  // Sonata Trace Port functionality.
+  logic [3:0] strace;
+  wire strace_unused_ = ^strace;
   logic                  spi_rx [SPI_NUM];
   logic                  spi_tx [SPI_NUM];
   logic [SPI_CS_NUM-1:0] spi_cs [SPI_NUM];
@@ -423,7 +426,9 @@ module top_verilator (input logic clk_i, rst_ni);
     .hyperram_cs  (),
 
     .tl_pinmux_o (tl_pinmux_h2d),
-    .tl_pinmux_i (tl_pinmux_d2h)
+    .tl_pinmux_i (tl_pinmux_d2h),
+
+    .strace_o    (strace)
   );
 
   // I2C 0 DPI

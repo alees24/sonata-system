@@ -102,7 +102,11 @@ module top_sonata (
   inout  logic       ah_tmpio7,
   inout  logic       ah_tmpio8,
   inout  logic       ah_tmpio9,
+
+  inout  logic       ah_tmpio14,
+  inout  logic       ah_tmpio15,
   inout  logic       ah_tmpio16,
+  inout  logic       ah_tmpio17,
 
   // Arduino shield SPI bus
   output logic       ah_tmpio10, // Chip select
@@ -340,7 +344,7 @@ module top_sonata (
     // TODO connect 14, 15 and 17 through XDC
     .ah_tmpio14(),
     .ah_tmpio15(),
-    .ah_tmpio16,
+    .ah_tmpio16(),
     .ah_tmpio17(),
     .mb2,
     .mb3,
@@ -393,7 +397,13 @@ module top_sonata (
   assign enable_cheri = 1'b1;
 
   logic rgbled_dout;
-  logic [8:0] unused_gp_o;
+  logic [7:0] unused_gp_o;
+
+  // Sonata Trace port
+  //  - the signal ordering here ensures that when tracing an SPI bus the signals match the pin
+  //    names and PCB legend since we're hijacking the ICSP connector which carries an SPI bus.
+  logic [3:0] strace;
+  assign {ah_tmpio14, ah_tmpio17, ah_tmpio15, ah_tmpio16} = strace;
 
   sonata_system #(
     .PwmWidth        (  1             ),
@@ -519,7 +529,9 @@ module top_sonata (
     .hyperram_cs,
 
     .tl_pinmux_o(tl_pinmux_h2d),
-    .tl_pinmux_i(tl_pinmux_d2h)
+    .tl_pinmux_i(tl_pinmux_d2h),
+
+    .strace_o   (strace)
   );
 
   assign rgbled0 = ~rgbled_dout;
@@ -532,7 +544,7 @@ module top_sonata (
   assign led_legacy = ~cheri_en;
   assign led_halted = 1'b0;
 
-  // Produce 50 MHz system clock from 25 MHz Sonata board clock.
+  // Produce system clock from 25 MHz Sonata board clock.
   clkgen_sonata #(
     .SysClkFreq(SysClkFreq),
     .HRClkFreq (HRClkFreq)
