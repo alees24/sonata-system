@@ -301,7 +301,6 @@ set_property -dict { PACKAGE_PIN V5  IOSTANDARD LVCMOS33 } [get_ports microsd_da
 set_property -dict { PACKAGE_PIN T8  IOSTANDARD LVCMOS33 } [get_ports microsd_dat3]
 set_property -dict { PACKAGE_PIN R8  IOSTANDARD LVCMOS33 } [get_ports microsd_cmd]
 set_property -dict { PACKAGE_PIN B3  IOSTANDARD LVCMOS18 } [get_ports microsd_det]
-set_property PULLTYPE PULLUP [get_ports microsd_dat0]
 
 # HyperRAM
 set_property -dict { PACKAGE_PIN   B1  IOSTANDARD   LVCMOS18 } [get_ports { hyperram_dq[0] }]
