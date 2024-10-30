@@ -16,6 +16,7 @@
 #include <platform-gpio.hh>
 #include <platform-uart.hh>
 #include <platform-i2c.hh>
+#include <platform-rgbctrl.hh>
 #include <platform-spi.hh>
 #include <platform-usbdev.hh>
 #include "platform-pinmux.hh"
@@ -30,6 +31,8 @@ typedef volatile OpenTitanUsbdev *UsbdevPtr;
 typedef volatile uint32_t *HyperramPtr;
 typedef PLIC::SonataPlic *PlicPtr;
 typedef SonataPinmux *PinmuxPtr;
+
+
 
 [[maybe_unused]] static GpioPtr gpio_ptr(CapRoot root) {
   CHERI::Capability<volatile SonataGpioBoard> gpio = root.cast<volatile SonataGpioBoard>();

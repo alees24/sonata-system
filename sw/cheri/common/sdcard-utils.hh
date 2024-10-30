@@ -9,7 +9,7 @@
 #include <platform-spi.hh>
 #include <platform-gpio.hh>
 
-#include "uart-utils.hh"
+#include "console.hh"
 
 using namespace CHERI;
 
@@ -27,6 +27,9 @@ class SdCard {
   // SD card `detect` pin (single bit set).
   uint32_t det;
 
+  // Access to diagnostic logging.
+  Log *log;
+
 // TODO: I seemingly cannot persuade the Integral card to use a non-512 byte block length.
 #if 1
 #define BLOCK_LEN 0x200u
@@ -41,20 +44,23 @@ class SdCard {
   };
 
  public:
-  SdCard(SpiRef spi_, GpioRef gpio_, unsigned cs_ = 3u, unsigned det_ = 17u) : spi(spi_), gpio(gpio_), cs(1u << cs_), det(1u << det_) {}
+  SdCard(SpiRef spi_, GpioRef gpio_, unsigned cs_ = 1u, unsigned det_ = 16u, Log *log_ = nullptr) : spi(spi_), gpio(gpio_), cs(1u << cs_), det(1u << det_), log(log_) {}
 
   // SD command codes.
   enum {
-    CMD0 = 0,
+    CMD_GO_IDLE_STATE = 0,
     CMD1 = 1,
-    CMD8 = 8,
-    CMD12 = 12,
-    CMD16 = 16,
-    CMD17 = 17,
-    CMD18 = 18,
+    CMD_SEND_IF_COND = 8,
+    CMD_SEND_CSD = 9,
+    CMD_SEND_CID = 10,
+    CMD_STOP_TRANSMISSION = 12,
+    CMD_SET_BLOCKLEN = 16,
+    CMD_READ_SINGLE_BLOCK = 17,
+    CMD_READ_MULTIPLE_BLOCK = 18,
     ACMD41 = 41,
-    CMD55 = 55,
-    CMD58 = 58,
+    CMD_APP_CMD = 55,
+    CMD_READ_OCR = 58,
+    CMD_CRC_ON_OFF = 59,
   };
 
   // Indicates whether there is an SD card present in the slot.
@@ -63,9 +69,9 @@ class SdCard {
   void select_card(bool enable) { spi->cs = enable ? (spi->cs & ~cs) : (spi->cs | cs); }
 
   // Initialise the SD card ready for use.
-  bool init(Capability<volatile OpenTitanUart> &uart) {
-
-  constexpr unsigned kSpiSpeed = 0u;
+  bool init() {
+    // Every card tried seems to be more than capable of keeping up with 20Mbps.
+    constexpr unsigned kSpiSpeed = 0u;
     spi->init(false, false, true, kSpiSpeed);
 
     // Apparently we're required to send at least 74 SD CLK cycles with
@@ -78,44 +84,125 @@ class SdCard {
     // Note that this is a very stripped-down card initialisation sequence
     // that assumes SDHC version 2, so use a more recent microSD card.
 
-    // CMD0
+    // CMD_GO_IDLE_STATE
     do {
-      send_command(CMD0, 0u, 0x95u, uart);
-    } while (0x01 != get_response(uart));
+      send_command(CMD_GO_IDLE_STATE, 0u, 0x95u);
+    } while (0x01 != get_response());
 
-    send_command(CMD8, 0x1aau, 0x87u, uart);
-    get_response5(uart);
+    send_command(CMD_SEND_IF_COND, 0x1aau, 0x87u);
+    get_response5();
+
+    // Read supported voltage range of the card.
+    send_command(CMD_READ_OCR, 0, 0xffu);
+    get_response5();
 
     do {
-      send_command(CMD55, 0, 0xffu, uart);
-      get_response(uart);
-      send_command(ACMD41, 1u << 30, 0xffu, uart);
-    } while (1 & get_response(uart));
+      send_command(CMD_APP_CMD, 0, 0xffu);
+      get_response();
+      send_command(ACMD41, 1u << 30, 0xffu);
+    } while (1 & get_response());
 
-    send_command(CMD58, 0, 0xffu, uart);
-    get_response5(uart);
+    if (log) {
+      log->println("Setting block length to {}", BLOCK_LEN);
+    }
 
-//    write_str(uart, "Setting block length\r\n");
+    // Read card capacity information.
+    send_command(CMD_READ_OCR, 0, 0xffu);
+    get_response5();
 
-    send_command(CMD16, BLOCK_LEN, 0xffu, uart);
-    uint8_t rd = get_response(uart);
-//    if (true) {
-//      write_str(uart, "Response: ");
-//      write_hex8b(uart, rd);
-//      write_str(uart, "\r\n");
-//    }
+    send_command(CMD_SET_BLOCKLEN, BLOCK_LEN, 0xffu);
+    uint8_t rd = get_response();
+    if (log) {
+      log->println("Response: {:#04x}", rd);
+    }
+    select_card(false);
+
+    return true;
+  }
+
+  // Read Card Specific Data.
+  bool read_csd(uint8_t buf[16]) { 
+    uint8_t crc16[2];
+
+    select_card(true);
+
+    send_command(CMD_SEND_CSD, 0, 0xffu);
+    while (get_response() != 0xfeu);
+
+    spi->blocking_read(buf, sizeof(buf));
+    spi->blocking_read(crc16, sizeof(crc16));
 
     select_card(false);
 
     return true;
   }
 
-  void send_command(uint8_t cmdCode, uint32_t arg, uint8_t crc, Capability<volatile OpenTitanUart> &uart) {
-    uint8_t cmd[6];
+  // Read Card Identification.
+  bool read_cid(uint8_t buf[16]) {
+    uint8_t crc16[2];
 
-//  write_str(uart, "Sending ");
-//  write_hex8b(uart, cmdCode);
-//  write_str(uart, "\r\n");
+    select_card(true);
+
+    send_command(CMD_SEND_CID, 0, 0xffu);
+    while (get_response() != 0xfeu);
+
+    spi->blocking_read(buf, sizeof(buf));
+    spi->blocking_read(crc16, sizeof(crc16));
+
+    select_card(false);
+
+    return true;
+  }
+
+  // Read a number of contiguous blocks from the SD card.
+  bool read_blocks(uint32_t block, uint8_t *buf, size_t num_blocks = 1u, bool blocking = true) {
+    // TODO: Have not yet been able to perform multi-block reads successfully.
+    const bool multi = false; // num_blocks > 1u;
+
+    select_card(true);
+
+    for (size_t blk = 0u; blk < num_blocks; blk++) {
+      uint8_t crc16[2];
+      if (log) {
+        log->println("Reading block {}", block + blk);
+      }
+
+      if (multi) {
+        // Is this the first block of the read request?
+        if (!blk) {
+          send_command(SdCard::CMD_READ_MULTIPLE_BLOCK, block, 0xffu);
+          while (get_response() != 0xfeu);
+        }
+      } else {
+        send_command(SdCard::CMD_READ_SINGLE_BLOCK, block + blk, 0xffu);
+        while (get_response() != 0xfeu);
+      }
+
+      spi->blocking_read(&buf[blk * BLOCK_LEN], BLOCK_LEN);
+      spi->blocking_read(crc16, sizeof(crc16));
+
+      if (log) {
+        log->println("Read block CRC {:#06x}", (crc16[0] << 8) | crc16[1]);
+      }
+    }
+
+    if (multi) {
+      uint8_t dummy;
+      send_command(SdCard::CMD_STOP_TRANSMISSION, 0u, 0xffu);
+      spi->blocking_read(&dummy, sizeof(dummy));
+      (void)get_response();
+    }
+
+    select_card(false);
+    return true;
+  }
+
+  // TODO: Calculate CRC7 for command.
+  void send_command(uint8_t cmdCode, uint32_t arg, uint8_t crc7) {
+    uint8_t cmd[6];
+    if (log) {
+      log->println("Sending command {:#04x}", cmdCode);
+    }
 
     // Apparently we need to clock 8 times before sending the command.
     uint8_t dummy = 0xffu;
@@ -126,12 +213,12 @@ class SdCard {
     cmd[2] = (uint8_t)(arg >> 16);
     cmd[3] = (uint8_t)(arg >> 8);
     cmd[4] = (uint8_t)(arg >> 0);
-    cmd[5] = crc;
+    cmd[5] = crc7;
 
     spi->blocking_write(cmd, sizeof(cmd));
   }
 
-  uint8_t get_response(Capability<volatile OpenTitanUart> &uart) {
+  uint8_t get_response() {
     spi->wait_idle();
     while (true) {
       uint8_t rd1;
@@ -152,9 +239,9 @@ class SdCard {
           break;
         default:
           if (rd1 != 0xffu && false) {
-            write_str(uart, "Response ");
-            write_hex8b(uart, rd1);
-            write_str(uart, "\r\n");
+//            write_str(uart, "Response ");
+//            write_hex8b(uart, rd1);
+//            write_str(uart, "\r\n");
           }
           break;
       }
@@ -165,7 +252,7 @@ class SdCard {
     }
   }
 
-  uint8_t get_nb_response1(Capability<volatile OpenTitanUart> &uart) {
+  uint8_t get_nb_response1() {
     uint8_t rd1;
 
     spi->wait_idle();
@@ -178,8 +265,8 @@ class SdCard {
     return rd1;
   }
 
-  void get_response5(Capability<volatile OpenTitanUart> &uart) {
-    (void)get_response(uart);
+  void get_response5() {
+    (void)get_response();
 
     for (int r = 0; r < 4; ++r) {
       volatile uint8_t rd2;
@@ -192,6 +279,14 @@ class SdCard {
     }
   }
 
-//  read_blocks();
-
+  // Utility function that converts Cylinder, Head, Sector (CHS) addressing into Logical Block Addressing
+  // (LBA), according to the specified disk geometry.
+  static uint32_t chs_to_lba(uint16_t c, uint8_t h, uint8_t s, uint8_t nheads, uint8_t nsecs) {
+    // Notes: cylinder and head are zero-based but sector number is 1-based (0 is invalid).
+    // CHS-addressed drives were limited to 255 heads and 63 sectors.
+    if (h >= nheads || !s || s > nsecs) {
+      return UINT32_MAX;
+    }
+    return ((c * nheads + h) * nsecs) + (s - 1);
+  }
 };

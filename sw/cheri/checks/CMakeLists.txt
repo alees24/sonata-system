@@ -2,11 +2,11 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 set(CHECKS
-  card_check.cc
   cheri_sanity.cc
   gpio_check.cc
   lcd_check.cc
   uart_check.cc
+  sdcard_test.cc
   spi_test.cc
   system_info_check.cc
   revocation_test.cc
