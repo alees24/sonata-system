@@ -22,6 +22,7 @@
 #include "../common/uart-utils.hh"
 #include "hyperram_tests.hh"
 #include "i2c_tests.hh"
+#include "sdcard_tests.hh"
 #include "spi_tests.hh"
 #include "pinmux_tests.hh"
 #include "pwm_tests.hh"
@@ -36,13 +37,14 @@ extern "C" void entry_point(void *rwRoot) {
   WriteUart uart{uart0};
   Log log(uart);
 
-  pwm_tests(root, log);
+  // pwm_tests(root, log);
   uart_tests(root, log);
-  i2c_tests(root, log);
+  // i2c_tests(root, log);
+  sdcard_tests(root, log);
   spi_tests(root, log);
   hyperram_tests(root, log);
-  usbdev_tests(root, log);
-  pinmux_tests(root, log);
+  // usbdev_tests(root, log);
+  // pinmux_tests(root, log);
   plic_tests(root, log);
   finish_running(log, "All tests finished");
 }

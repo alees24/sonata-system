@@ -32,8 +32,6 @@ typedef volatile uint32_t *HyperramPtr;
 typedef PLIC::SonataPlic *PlicPtr;
 typedef SonataPinmux *PinmuxPtr;
 
-
-
 [[maybe_unused]] static GpioPtr gpio_ptr(CapRoot root) {
   CHERI::Capability<volatile SonataGpioBoard> gpio = root.cast<volatile SonataGpioBoard>();
   gpio.address()                                   = GPIO_ADDRESS;

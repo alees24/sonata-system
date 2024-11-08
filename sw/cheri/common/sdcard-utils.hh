@@ -30,37 +30,30 @@ class SdCard {
   // Access to diagnostic logging.
   Log *log;
 
-// TODO: I seemingly cannot persuade the Integral card to use a non-512 byte block length.
-#if 1
-#define BLOCK_LEN 0x200u
-#else
-#define BLOCK_LEN 0x400u
-#endif
+  // TODO: I seemingly cannot persuade the Integral card to use a non-512 byte block length.
+  #define BLOCK_LEN 0x200u
 
-  static constexpr uint8_t ones[] = {
-    0xffu, 0xffu, 0xffu, 0xffu,
-    0xffu, 0xffu, 0xffu, 0xffu,
-    0xffu, 0xffu
-  };
+  static constexpr uint8_t ones[] = {0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu};
 
  public:
-  SdCard(SpiRef spi_, GpioRef gpio_, unsigned cs_ = 1u, unsigned det_ = 16u, Log *log_ = nullptr) : spi(spi_), gpio(gpio_), cs(1u << cs_), det(1u << det_), log(log_) {}
+  SdCard(SpiRef spi_, GpioRef gpio_, unsigned cs_ = 1u, unsigned det_ = 16u, Log *log_ = nullptr)
+      : spi(spi_), gpio(gpio_), cs(1u << cs_), det(1u << det_), log(log_) {}
 
   // SD command codes.
   enum {
-    CMD_GO_IDLE_STATE = 0,
-    CMD1 = 1,
-    CMD_SEND_IF_COND = 8,
-    CMD_SEND_CSD = 9,
-    CMD_SEND_CID = 10,
-    CMD_STOP_TRANSMISSION = 12,
-    CMD_SET_BLOCKLEN = 16,
-    CMD_READ_SINGLE_BLOCK = 17,
+    CMD_GO_IDLE_STATE       = 0,
+    CMD1                    = 1,
+    CMD_SEND_IF_COND        = 8,
+    CMD_SEND_CSD            = 9,
+    CMD_SEND_CID            = 10,
+    CMD_STOP_TRANSMISSION   = 12,
+    CMD_SET_BLOCKLEN        = 16,
+    CMD_READ_SINGLE_BLOCK   = 17,
     CMD_READ_MULTIPLE_BLOCK = 18,
-    ACMD41 = 41,
-    CMD_APP_CMD = 55,
-    CMD_READ_OCR = 58,
-    CMD_CRC_ON_OFF = 59,
+    ACMD41                  = 41,
+    CMD_APP_CMD             = 55,
+    CMD_READ_OCR            = 58,
+    CMD_CRC_ON_OFF          = 59,
   };
 
   // Indicates whether there is an SD card present in the slot.
@@ -84,7 +77,6 @@ class SdCard {
     // Note that this is a very stripped-down card initialisation sequence
     // that assumes SDHC version 2, so use a more recent microSD card.
 
-    // CMD_GO_IDLE_STATE
     do {
       send_command(CMD_GO_IDLE_STATE, 0u, 0x95u);
     } while (0x01 != get_response());
@@ -121,7 +113,7 @@ class SdCard {
   }
 
   // Read Card Specific Data.
-  bool read_csd(uint8_t buf[16]) { 
+  bool read_csd(uint8_t *buf, size_t len) {
     uint8_t crc16[2];
 
     select_card(true);
@@ -129,7 +121,7 @@ class SdCard {
     send_command(CMD_SEND_CSD, 0, 0xffu);
     while (get_response() != 0xfeu);
 
-    spi->blocking_read(buf, sizeof(buf));
+    spi->blocking_read(buf, len);
     spi->blocking_read(crc16, sizeof(crc16));
 
     select_card(false);
@@ -138,7 +130,7 @@ class SdCard {
   }
 
   // Read Card Identification.
-  bool read_cid(uint8_t buf[16]) {
+  bool read_cid(uint8_t *buf, size_t len) {
     uint8_t crc16[2];
 
     select_card(true);
@@ -146,7 +138,7 @@ class SdCard {
     send_command(CMD_SEND_CID, 0, 0xffu);
     while (get_response() != 0xfeu);
 
-    spi->blocking_read(buf, sizeof(buf));
+    spi->blocking_read(buf, len);
     spi->blocking_read(crc16, sizeof(crc16));
 
     select_card(false);
@@ -157,7 +149,7 @@ class SdCard {
   // Read a number of contiguous blocks from the SD card.
   bool read_blocks(uint32_t block, uint8_t *buf, size_t num_blocks = 1u, bool blocking = true) {
     // TODO: Have not yet been able to perform multi-block reads successfully.
-    const bool multi = false; // num_blocks > 1u;
+    const bool multi = false;  // num_blocks > 1u;
 
     select_card(true);
 
@@ -224,24 +216,25 @@ class SdCard {
       uint8_t rd1;
 
       spi->transmitFifo = 0xffu;
-      spi->control = SonataSpi::ControlTransmitEnable | SonataSpi::ControlReceiveEnable;
-      spi->start = 1u;
+      spi->control      = SonataSpi::ControlTransmitEnable | SonataSpi::ControlReceiveEnable;
+      spi->start        = 1u;
       spi->wait_idle();
-		  while ((spi->status & SonataSpi::StatusRxFifoLevel) == 0) {}
-		  rd1 = static_cast<uint8_t>(spi->receiveFifo);
+      while ((spi->status & SonataSpi::StatusRxFifoLevel) == 0) {
+      }
+      rd1 = static_cast<uint8_t>(spi->receiveFifo);
 
       switch (rd1) {
         case 0x00u:
-          //write_str(uart, ".");
+          // write_str(uart, ".");
           break;
         case 0x01u:
-          //write_str(uart, "\r\n");
+          // write_str(uart, "\r\n");
           break;
         default:
           if (rd1 != 0xffu && false) {
-//            write_str(uart, "Response ");
-//            write_hex8b(uart, rd1);
-//            write_str(uart, "\r\n");
+            //            write_str(uart, "Response ");
+            //            write_hex8b(uart, rd1);
+            //            write_str(uart, "\r\n");
           }
           break;
       }
@@ -257,11 +250,12 @@ class SdCard {
 
     spi->wait_idle();
     spi->transmitFifo = 0xffu;
-    spi->control = SonataSpi::ControlTransmitEnable | SonataSpi::ControlReceiveEnable;
-    spi->start = 1u;
+    spi->control      = SonataSpi::ControlTransmitEnable | SonataSpi::ControlReceiveEnable;
+    spi->start        = 1u;
     spi->wait_idle();
-	  while ((spi->status & SonataSpi::StatusRxFifoLevel) == 0) {}
-	  rd1 = static_cast<uint8_t>(spi->receiveFifo);
+    while ((spi->status & SonataSpi::StatusRxFifoLevel) == 0) {
+    }
+    rd1 = static_cast<uint8_t>(spi->receiveFifo);
     return rd1;
   }
 
@@ -271,11 +265,12 @@ class SdCard {
     for (int r = 0; r < 4; ++r) {
       volatile uint8_t rd2;
       spi->transmitFifo = 0xffu;
-      spi->control = SonataSpi::ControlTransmitEnable | SonataSpi::ControlReceiveEnable;
-      spi->start = 1u;
+      spi->control      = SonataSpi::ControlTransmitEnable | SonataSpi::ControlReceiveEnable;
+      spi->start        = 1u;
       spi->wait_idle();
-	    while ((spi->status & SonataSpi::StatusRxFifoLevel) == 0) {}
-	    rd2 = static_cast<uint8_t>(spi->receiveFifo);
+      while ((spi->status & SonataSpi::StatusRxFifoLevel) == 0) {
+      }
+      rd2 = static_cast<uint8_t>(spi->receiveFifo);
     }
   }
 

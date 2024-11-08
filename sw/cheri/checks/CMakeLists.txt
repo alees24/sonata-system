@@ -6,7 +6,6 @@ set(CHECKS
   gpio_check.cc
   lcd_check.cc
   uart_check.cc
-  sdcard_test.cc
   spi_test.cc
   system_info_check.cc
   revocation_test.cc
