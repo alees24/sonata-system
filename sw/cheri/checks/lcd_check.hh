@@ -2,9 +2,9 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-//#define CHERIOT_NO_AMBIENT_MALLOC
-//#define CHERIOT_NO_NEW_DELETE
-//#define CHERIOT_PLATFORM_CUSTOM_UART
+// #define CHERIOT_NO_AMBIENT_MALLOC
+// #define CHERIOT_NO_NEW_DELETE
+// #define CHERIOT_PLATFORM_CUSTOM_UART
 
 #include "../../common/defs.h"
 
@@ -18,7 +18,7 @@
 using namespace CHERI;
 
 #include "../../../vendor/display_drivers/st7735/lcd_st7735_init.h"
-//#include "lowrisc_logo_native.h"
+// #include "lowrisc_logo_native.h"
 
 // When running in simulation, eliminate the delays?
 #define SIMULATION 0
@@ -26,9 +26,9 @@ using namespace CHERI;
 const int LcdRstPin = 1, LcdDcPin = 2, LcdBlPin = 3;
 
 // LCD properties.
-//const uint32_t width  = 128u;
-//const uint32_t height = 160u;
-const uint32_t width = 160u;
+// const uint32_t width  = 128u;
+// const uint32_t height = 160u;
+const uint32_t width  = 160u;
 const uint32_t height = 128u;
 // Logo properties.
 const uint32_t img_width  = 105u;
@@ -81,8 +81,8 @@ static void write_data(Capability<volatile SonataSpi> &spi, Capability<volatile 
   set_cs_dc(spi, gpio, true, true);
 }
 
-static void write_data2(Capability<volatile SonataSpi> &spi, Capability<volatile SonataGPIO> &gpio, const uint8_t *data1,
-                        size_t len1, const uint8_t *data2, size_t len2) {
+static void write_data2(Capability<volatile SonataSpi> &spi, Capability<volatile SonataGPIO> &gpio,
+                        const uint8_t *data1, size_t len1, const uint8_t *data2, size_t len2) {
   set_cs_dc(spi, gpio, false, true);
   write_buffer(spi, data1, len1);
   if (len2 > 0) write_buffer(spi, data2, len2);
@@ -122,8 +122,8 @@ static void fill_rect(Capability<volatile SonataSpi> &spi, Capability<volatile S
 }
 
 static void draw_image(Capability<volatile SonataSpi> &spi, Capability<volatile SonataGPIO> &gpio, uint16_t x0,
-                       uint16_t y0, uint16_t x1, uint16_t y1, const uint8_t *data1, size_t len1,
-                       const uint8_t *data2, size_t len2) {
+                       uint16_t y0, uint16_t x1, uint16_t y1, const uint8_t *data1, size_t len1, const uint8_t *data2,
+                       size_t len2) {
   set_address(spi, gpio, x0, y0, x1, y1);
   write_command(spi, gpio, &ramwr, 1u);
   write_data2(spi, gpio, data1, len1, data2, len2);
@@ -177,7 +177,7 @@ void display_init(Capability<volatile SonataSpi> &spi, Capability<volatile Sonat
   run_script(uart, spi, gpio, init_script_r);
   run_script(uart, spi, gpio, init_script_r3);
 
-//  uint8_t data = ST77_MADCTL_MX | ST77_MADCTL_MV | ST77_MADCTL_RGB;
+  //  uint8_t data = ST77_MADCTL_MX | ST77_MADCTL_MV | ST77_MADCTL_RGB;
   uint8_t data = ST77_MADCTL_MY | ST77_MADCTL_RGB;
   write_command(spi, gpio, &madctl, 1u);
   write_data(spi, gpio, &data, 1u);
