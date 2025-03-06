@@ -60,8 +60,6 @@ static void update_jtag_signals(struct jtagdpi_ctx *ctx) {
     return;
   }
 
-  printf("update_jtag_signals: %c\n", cmd);
-
   bool act_send_resp = false;
   bool act_quit = false;
 
@@ -81,9 +79,9 @@ static void update_jtag_signals(struct jtagdpi_ctx *ctx) {
     // JTAG read
     act_send_resp = true;
   } else if (cmd == 'B') {
-    printf("BLINK ON!\n");
+//    printf("BLINK ON!\n");
   } else if (cmd == 'b') {
-    printf("BLINK OFF!\n");
+//    printf("BLINK OFF!\n");
   } else if (cmd == 'Q') {
     // quit (client disconnect)
     act_quit = true;

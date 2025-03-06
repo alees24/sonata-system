@@ -41,7 +41,7 @@ Disassembly of section .text:
      860: 23 26 05 10  	csw	zero, 268(ca0)
      864: 5b 05 a0 03  	cspecialr	ca0, 26
      868: 5b 04 90 03  	cspecialr	cs0, 25
-     86c: 73 00 10 00  	ebreak	
+     86c: 73 00 10 00  	ebreak
 
 00000870 <going>:
      870: 23 22 05 10  	csw	zero, 260(ca0)
@@ -54,4 +54,4 @@ Disassembly of section .text:
      884: 23 24 85 10  	csw	s0, 264(ca0)
      888: 5b 05 a0 03  	cspecialr	ca0, 26
      88c: 5b 04 90 03  	cspecialr	cs0, 25
-     890: 73 00 20 7b  	dret	
+     890: 73 00 20 7b  	dret

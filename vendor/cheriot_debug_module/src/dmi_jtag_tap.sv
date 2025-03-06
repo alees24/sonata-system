@@ -72,7 +72,7 @@ module dmi_jtag_tap #(
   logic [IrLength-1:0]  jtag_ir_shift_d, jtag_ir_shift_q;
   // IR register -> this gets captured from shift register upon update_ir
   ir_reg_e              jtag_ir_d, jtag_ir_q;
-  logic capture_ir, shift_ir, update_ir; // pause_ir
+  logic capture_ir, shift_ir, update_ir, test_logic_reset; // pause_ir
 
   always_comb begin : p_jtag
     jtag_ir_shift_d = jtag_ir_shift_q;
@@ -91,6 +91,12 @@ module dmi_jtag_tap #(
     // update IR register
     if (update_ir) begin
       jtag_ir_d = ir_reg_e'(jtag_ir_shift_q);
+    end
+
+    if (test_logic_reset) begin
+      // Bring all TAP state to the initial value.
+      jtag_ir_shift_d = '0;
+      jtag_ir_d = IDCODE;
     end
   end
 
@@ -128,6 +134,12 @@ module dmi_jtag_tap #(
     if (shift_dr) begin
       if (idcode_select)  idcode_d = {td_i, 31'(idcode_q >> 1)};
       if (bypass_select)  bypass_d = td_i;
+    end
+
+    if (test_logic_reset) begin
+      // Bring all TAP state to the initial value.
+      idcode_d = IdcodeValue;
+      bypass_d = 1'b0;
     end
   end
 
@@ -199,7 +211,7 @@ module dmi_jtag_tap #(
   // Determination of next state; purely combinatorial
   always_comb begin : p_tap_fsm
 
-    trst_no            = trst_ni;
+    test_logic_reset   = 1'b0;
 
     capture_dr         = 1'b0;
     shift_dr           = 1'b0;
@@ -213,7 +225,7 @@ module dmi_jtag_tap #(
     unique case (tap_state_q)
       TestLogicReset: begin
         tap_state_d = (tms_i) ? TestLogicReset : RunTestIdle;
-        trst_no = 1'b1;
+        test_logic_reset = 1'b1;
       end
       RunTestIdle: begin
         tap_state_d = (tms_i) ? SelectDrScan : RunTestIdle;
@@ -287,7 +299,7 @@ module dmi_jtag_tap #(
 
   always_ff @(posedge tck_i or negedge trst_ni) begin : p_regs
     if (!trst_ni) begin
-      tap_state_q <= RunTestIdle;
+      tap_state_q <= TestLogicReset;
       idcode_q    <= IdcodeValue;
       bypass_q    <= 1'b0;
     end else begin
@@ -300,6 +312,7 @@ module dmi_jtag_tap #(
   // Pass through JTAG signals to debug custom DR logic.
   // In case of a single TAP those are just feed-through.
   assign tck_o = tck_i;
+  assign trst_no = !test_logic_reset;
   assign tdi_o = td_i;
   assign update_o = update_dr;
   assign shift_o = shift_dr;
