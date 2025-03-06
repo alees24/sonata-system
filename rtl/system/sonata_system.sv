@@ -313,6 +313,8 @@ module sonata_system
   tlul_pkg::tl_d2h_t tl_rv_plic_d2h;
   tlul_pkg::tl_h2d_t tl_spi_h2d[SPI_NUM];
   tlul_pkg::tl_d2h_t tl_spi_d2h[SPI_NUM];
+  tlul_pkg::tl_h2d_t tl_dbg_dev_us_h2d[2];
+  tlul_pkg::tl_d2h_t tl_dbg_dev_us_d2h[2];
   tlul_pkg::tl_h2d_t tl_usbdev_h2d;
   tlul_pkg::tl_d2h_t tl_usbdev_d2h;
   tlul_pkg::tl_h2d_t tl_rev_tag_h2d;
@@ -321,8 +323,8 @@ module sonata_system
   tlul_pkg::tl_d2h_t tl_hw_rev_d2h;
   tlul_pkg::tl_h2d_t tl_pinmux_h2d;
   tlul_pkg::tl_d2h_t tl_pinmux_d2h;
-  tlul_pkg::tl_h2d_t tl_dbg_dev_h2d;
-  tlul_pkg::tl_d2h_t tl_dbg_dev_d2h;
+  tlul_pkg::tl_h2d_t tl_dbg_dev_ds_h2d;
+  tlul_pkg::tl_d2h_t tl_dbg_dev_ds_d2h;
 
   sonata_xbar_main xbar (
     // Clock and reset.
@@ -372,6 +374,8 @@ module sonata_system
     .tl_spi_i         (tl_spi_d2h),
     .tl_usbdev_o      (tl_usbdev_h2d),
     .tl_usbdev_i      (tl_usbdev_d2h),
+    .tl_dbg_dev_o     (tl_dbg_dev_us_h2d[1]),
+    .tl_dbg_dev_i     (tl_dbg_dev_us_d2h[1]),
     .tl_rv_plic_o     (tl_rv_plic_h2d),
     .tl_rv_plic_i     (tl_rv_plic_d2h)
   );
@@ -390,8 +394,8 @@ module sonata_system
     .tl_sram_i     (tl_sram_b_d2h),
     .tl_hyperram_o (tl_hyperram_us_h2d[1]),
     .tl_hyperram_i (tl_hyperram_us_d2h[1]),
-    .tl_dbg_dev_o  (tl_dbg_dev_h2d),
-    .tl_dbg_dev_i  (tl_dbg_dev_d2h),
+    .tl_dbg_dev_o  (tl_dbg_dev_us_h2d[0]),
+    .tl_dbg_dev_i  (tl_dbg_dev_us_d2h[0]),
 
     .scanmode_i (prim_mubi_pkg::MuBi4False)
   );
@@ -535,6 +539,21 @@ module sonata_system
     .tl_d_i(tl_hyperram_ds_d2h)
   );
 
+  tlul_socket_m1 #(
+    .HReqDepth (8'h0),
+    .HRspDepth (8'h0),
+    .DReqDepth (4'h0),
+    .DRspDepth (4'h0),
+    .M         (2)
+  ) u_debug_module_tl_socket (
+    .clk_i (clk_sys_i),
+    .rst_ni(rst_sys_ni),
+    .tl_h_i(tl_dbg_dev_us_h2d),
+    .tl_h_o(tl_dbg_dev_us_d2h),
+    .tl_d_o(tl_dbg_dev_ds_h2d),
+    .tl_d_i(tl_dbg_dev_ds_d2h)
+  );
+
   tlul_adapter_reg #(
     .RegAw         ( DRegAddrWidth ),
     .AccessLatency ( 1             )
@@ -543,8 +562,8 @@ module sonata_system
     .rst_ni       (rst_sys_ni),
 
     // TL-UL interface.
-    .tl_i         (tl_dbg_dev_h2d),
-    .tl_o         (tl_dbg_dev_d2h),
+    .tl_i         (tl_dbg_dev_ds_h2d),
+    .tl_o         (tl_dbg_dev_ds_d2h),
 
     // Control interface.
     .en_ifetch_i  (prim_mubi_pkg::MuBi4True),
@@ -560,6 +579,8 @@ module sonata_system
     .rdata_i      (device_rdata[DbgDev]),
     .error_i      (device_err[DbgDev])
   );
+
+  assign device_err[DbgDev] = 1'b0;
 
   // Set upper bits of address.
   assign device_addr[DbgDev][BusAddrWidth-1:DRegAddrWidth] = tl_ifetch_pkg::ADDR_SPACE_DBG_DEV[BusAddrWidth-1:DRegAddrWidth];

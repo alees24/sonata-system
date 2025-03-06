@@ -6,7 +6,7 @@
 #include "encoding.h"
 
 // The debugger can assume as second scratch register.
-// # define SND_SCRATCH 1
+# define SND_SCRATCH 1
 // These are implementation-specific addresses in the Debug Module
 #define HALTED    0x100
 #define GOING     0x104

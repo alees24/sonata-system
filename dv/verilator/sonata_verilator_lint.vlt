@@ -98,3 +98,6 @@ tracing_off -file "*uartdpi.sv"
 // bit in the net 'p2d'.
 lint_off -rule UNUSED -file "*usbdpi.sv" -match "*Signal is not used*"
 lint_off -rule UNUSED -file "*usbdpi.sv" -match "*Bits of signal are not used*"
+
+// TODO: This is temporary for debug module bring up!
+lint_off -rule UNOPTFLAT
