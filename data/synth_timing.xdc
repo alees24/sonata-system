@@ -357,15 +357,17 @@ set_output_delay -clock vclk_sys -min 0 [get_ports {pmodc[*]}]
 #
 # Sonata SPI host can only go as fast as half the system clock.
 # Easier to constrain against the Sonata SPI clock speed than arbitrary 15 MHz.
-# As we output both clock + data *and do not receive any data back*,
-# the clock can take as long as it likes so long as the data is constrained
-# against it using the device setup and hold requirements (and some margin).
+# Use the device setup and hold requirements (and some margin).
 # Specify multicycle path constraint in the timing exceptions section
 # to account for the halving of the clock rate.
+#
+# TODO: timing constraints
+set_input_delay -clock clk_lcd -max 0 [get_ports lcd_copi]
+set_input_delay -clock clk_lcd -min 0 [get_ports lcd_copi]
 set_output_delay -clock clk_sys -max 0 [get_ports lcd_clk]
 set_output_delay -clock clk_sys -min 0 [get_ports lcd_clk]
-set_output_delay -clock clk_lcd -max [expr { 10 * 1.1}] [get_ports lcd_copi]
-set_output_delay -clock clk_lcd -min [expr {-10 * 1.1}] [get_ports lcd_copi]
+set_output_delay -clock clk_lcd -max 0 [get_ports lcd_copi]
+set_output_delay -clock clk_lcd -min 0 [get_ports lcd_copi]
 # Other interface signals change once for every transaction at most,
 # but some have high setup requirements.
 # Set a multicycle path constraint in timing exceptions section based on
@@ -855,6 +857,8 @@ set_multicycle_path [expr {$usb_conf_extusb_mulcycs - 1}] -hold  -end -to [get_p
 set lcd_fast_mulcycs 2
 set_multicycle_path        $lcd_fast_mulcycs       -setup -start -to [get_ports lcd_copi]
 set_multicycle_path [expr {$lcd_fast_mulcycs - 1}] -hold  -start -to [get_ports lcd_copi]
+set_multicycle_path        $lcd_fast_mulcycs       -setup -end -from [get_ports lcd_copi]
+set_multicycle_path [expr {$lcd_fast_mulcycs - 1}] -hold  -end -from [get_ports lcd_copi]
 # Chip select and data/command select are output by a GPIO block
 # once every transaction, so give them a couple of (destination clk) cycles
 # to account for the delay between writing to GPIO and starting SPI output.
