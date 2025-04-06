@@ -22,7 +22,7 @@ module top_sonata
 
   output logic       lcd_rst,
   output logic       lcd_dc,
-  output logic       lcd_copi,
+  inout  logic       lcd_copi,
   output logic       lcd_clk,
   output logic       lcd_cs,
   output logic       lcd_backlight,
@@ -117,6 +117,12 @@ module top_sonata
   inout  logic       ah_tmpio11, // COPI
   inout  logic       ah_tmpio12, // CIPO or GP
   inout  logic       ah_tmpio13, // SCLK
+
+  // Sonata Trace port.
+  output logic       ah_tmpio14,
+  output logic       ah_tmpio15,
+  output logic       ah_tmpio16,
+  output logic       ah_tmpio17,
 
   // Arduino shield analog(ue) pins digital inputs
   input logic [5:0]  ard_an_di,
@@ -257,6 +263,8 @@ module top_sonata
   sonata_out_pins_t out_to_pins;
   sonata_inout_pins_t inout_from_pins, inout_to_pins, inout_to_pins_en;
 
+  logic lcd_copi_int, lcd_copi_en, lcd_cipo;
+
   logic cheri_en;
 
   // Enable CHERI by default.
@@ -314,7 +322,9 @@ module top_sonata
     .ard_an_n_i     (ard_an_n),
 
     // Non-pinmuxed spi devices
-    .lcd_copi_o              (lcd_copi),
+    .lcd_copi_o              (lcd_copi_int),
+    .lcd_copi_en_o           (lcd_copi_en),
+    .lcd_cipo_i              (lcd_cipo),
     .lcd_sclk_o              (lcd_clk),
     .lcd_cs_o                (lcd_cs),
     .lcd_dc_o                (lcd_dc),
@@ -361,12 +371,12 @@ module top_sonata
 
     // No HyperRAM on Sonata XL
     // TODO: find a nicer was to disconnect hyperram
-    .hyperram_dq(),
-    .hyperram_rwds(),
-    .hyperram_ckp(),
-    .hyperram_ckn(),
-    .hyperram_nrst(),
-    .hyperram_cs(),
+//    .hyperram_dq(),
+//    .hyperram_rwds(),
+//    .hyperram_ckp(),
+//    .hyperram_ckn(),
+//    .hyperram_nrst(),
+//    .hyperram_cs(),
 
     .rs485_tx_enable_o(rs485_tx_enable),
     .rs485_rx_enable_o(rs485_rx_enable),
@@ -456,10 +466,10 @@ module top_sonata
   assign microsd_clk  = out_to_pins[OUT_PIN_MICROSD_CLK ];
   assign microsd_dat3 = out_to_pins[OUT_PIN_MICROSD_DAT3];
 
-  // Inout Pins
+  // Pinmux inout Pins
   padring #(
     .InoutNumber(INOUT_PIN_NUM)
-  ) u_padring (
+  ) u_pinmux_padring (
     .inout_to_pins_i   (inout_to_pins   ),
     .inout_to_pins_en_i(inout_to_pins_en),
     .inout_from_pins_o (inout_from_pins ),
@@ -517,6 +527,28 @@ module top_sonata
       scl0
     })
   );
+
+  // Other inout Pins
+  padring #(
+    .InoutNumber(1)
+  ) u_other_padring (
+    .inout_to_pins_i   (lcd_copi_int),
+    .inout_to_pins_en_i(lcd_copi_en),
+    .inout_from_pins_o (lcd_cipo),
+    .inout_pins_io     (lcd_copi)
+  );
+
+  // TODO: Temporarily export LCD SPI traffic to ICSP connector for monitoring.
+  // COPI, CS, SCK, CIPO
+  logic [3:0] icsp;
+  assign {ah_tmpio17, ah_tmpio16, ah_tmpio15, ah_tmpio14} = icsp;
+  always @(posedge clk_sys) begin
+    icsp <= { lcd_copi_int,  // SPI controller output traffic
+              lcd_cs,
+              lcd_clk,
+              lcd_cipo  // All traffic, but not direct I/O pin connection.
+            };
+  end
 
   // 90ns switch time + 10ns margin for FPGA output and otherwise easing timing. If this parameter
   // is adjusted constraints on rs485_de/rs485_ren in synth_timing.xdc must be adjusted to match

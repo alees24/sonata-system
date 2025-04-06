@@ -118,6 +118,8 @@ set_property -dict { PACKAGE_PIN M2  IOSTANDARD LVCMOS33 } [get_ports lcd_copi]
 set_property -dict { PACKAGE_PIN P5  IOSTANDARD LVCMOS33 } [get_ports lcd_clk]
 set_property -dict { PACKAGE_PIN P3  IOSTANDARD LVCMOS33 } [get_ports lcd_cs]
 set_property -dict { PACKAGE_PIN R3  IOSTANDARD LVCMOS33 } [get_ports lcd_backlight]
+# Assert pull up because we're using this as a tri-stated input (CIPO) too.
+set_property PULLTYPE PULLUP [get_ports lcd_copi]
 
 ## UART 0
 set_property -dict { PACKAGE_PIN D25 IOSTANDARD LVCMOS33 } [get_ports ser0_tx]
@@ -220,6 +222,13 @@ set_property PULLTYPE PULLUP [get_ports rph_g1]
 set_property PULLTYPE PULLUP [get_ports rph_g0]
 
 ## Arduino Shield
+# ICSP - hijacked for Sonata Trace port.
+set_property -dict { PACKAGE_PIN K25 IOSTANDARD LVCMOS33 } [get_ports ah_tmpio14]
+set_property -dict { PACKAGE_PIN L20 IOSTANDARD LVCMOS33 } [get_ports ah_tmpio15]
+set_property -dict { PACKAGE_PIN N18 IOSTANDARD LVCMOS33 } [get_ports ah_tmpio17]
+## GPIO
+set_property -dict { PACKAGE_PIN L24 IOSTANDARD LVCMOS33 } [get_ports ah_tmpio16]
+
 ## SPI SCLK
 set_property -dict { PACKAGE_PIN M22 IOSTANDARD LVCMOS33 IO_BUFFER_TYPE NONE } [get_ports ah_tmpio13]
 ## SPI CIPO
