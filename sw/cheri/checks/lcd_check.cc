@@ -50,9 +50,20 @@ static const uint8_t madctl = ST7735_MADCTL;
 static const uint8_t caset  = ST7735_CASET;
 static const uint8_t raset  = ST7735_RASET;
 static const uint8_t ramwr  = ST7735_RAMWR;
+
+static const uint8_t rddst  = ST7735_RDDST;
+static const uint8_t rddid  = ST7735_RDDID;
 static const uint8_t rdid1  = ST7735_RDID1;
 static const uint8_t rdid2  = ST7735_RDID2;
 static const uint8_t rdid3  = ST7735_RDID3;
+
+static const uint8_t ptlar  = ST7735_PTLAR;
+static const uint8_t ptlon  = ST7735_PTLON;
+
+static const uint8_t srst  = ST7735_SWRESET;
+static const uint8_t ramrd = ST7735_RAMRD;
+
+static const uint8_t colmod =ST7735_COLMOD;
 
 // TODO: adjust for clock frequency.
 static inline void delay(int delay_ms) {
@@ -84,18 +95,7 @@ static void write_buffer(SpiLcdCap &spi, const uint8_t *data, size_t len) {
   }
 }
 
-static void write_data(SpiLcdCap &spi, const uint8_t *data, size_t len) {
-  set_cs_dc(spi, false, true);
-  write_buffer(spi, data, len);
-  spi->wait_idle();
-  set_cs_dc(spi, true, true);
-}
-
-static void read_data(SpiLcdCap &spi, const uint8_t *cmd, uint8_t *data, size_t len) {
-  set_cs_dc(spi, false, true);
-  write_command(spi, cmd, 1u);
-  spi->wait_idle();
-  set_output_bit(spi, LcdOutEnPin, 0x0);
+static void read_buffer(SpiLcdCap &spi, uint8_t *data, size_t len) {
   while (len > 0u) {
     // SPI controller supports only 0x7ff bytes in a single command.
     size_t chunk = len;
@@ -104,13 +104,33 @@ static void read_data(SpiLcdCap &spi, const uint8_t *cmd, uint8_t *data, size_t 
     data += chunk;
     len -= chunk;
   }
+}
+
+static void write_data(SpiLcdCap &spi, const uint8_t *data, size_t len) {
+  set_cs_dc(spi, false, true);
+  write_buffer(spi, data, len);
   spi->wait_idle();
-  set_output_bit(spi, LcdOutEnPin, 0x1);
   set_cs_dc(spi, true, true);
+}
+
+static void read_data(SpiLcdCap &spi, const uint8_t *cmd, uint8_t *data, size_t len) {
+  set_cs_dc(spi, false, false);
+  write_command(spi, cmd, 1u);
+  spi->wait_idle();
+  set_output_bit(spi, LcdOutEnPin, 0x0);
+  set_cs_dc(spi, false, true);
+  read_buffer(spi, data, len);
+  set_cs_dc(spi, true, true);
+  set_output_bit(spi, LcdOutEnPin, 0x1);
 }
 
 static void set_address(SpiLcdCap &spi, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
   uint8_t coord[4];
+
+//x0 += 2;
+//y0++;
+//x1 += 2;
+//y1++;
 
   coord[0] = (uint8_t)(x0 >> 8);
   coord[1] = (uint8_t)x0;
@@ -172,6 +192,23 @@ static void run_script(Capability<volatile OpenTitanUart> &uart, SpiLcdCap &spi,
   }
 }
 
+
+static void partial_area(SpiLcdCap &spi) {
+  const uint16_t pel = 0xA0;
+  const uint16_t psl = 0x2;
+
+  uint8_t data[4];
+  data[0] = (uint8_t)psl >> 8;
+  data[1] = (uint8_t)psl;
+  data[2] = (uint8_t)pel >> 8;
+  data[3] = (uint8_t)pel;
+
+  write_command(spi, &ptlar, 1u);
+  write_data(spi, data, 4u);
+
+  write_command(spi, &ptlon, 1u);
+}
+
 /**
  * C++ entry point for the loader.  This is called from assembly, with the
  * read-write root in the first argument.
@@ -200,7 +237,7 @@ extern "C" [[noreturn]] void entry_point(void *rwRoot) {
 
   // This is maximum speed (15Mbps presently) which works fine, but we can run at a lower speed
   // to exercise interrupts/FIFO behaviour more thoroughly.
-  const uint8_t SpiSpeed = 7u;
+  const uint8_t SpiSpeed = 4u;
   spi->init(false, false, true, SpiSpeed);
 
   // Set the initial state of the LCD control pins.
@@ -212,25 +249,166 @@ extern "C" [[noreturn]] void entry_point(void *rwRoot) {
   set_output_bit(spi, LcdRstPin, 0x1);
 
   // Send display initialisation commands.
-  run_script(uart, spi, init_script_b);
-  run_script(uart, spi, init_script_r);
-  run_script(uart, spi, init_script_r3);
+//  run_script(uart, spi, init_script_b);
+//  run_script(uart, spi, init_script_r);
+//  run_script(uart, spi, init_script_r3);
 
+// partial_area(spi);
+
+#if 1
   uint8_t data[8];
+
+  write_command(spi, &srst, 1);
+  set_cs_dc(spi, true, false);
+  delay(200);
+
+{
+  uint16_t pix;
+
+  // Ensure MV = 0
+  uint8_t fmt = 0;
+  write_command(spi, &madctl, 1);
+  write_data(spi, &fmt, 1);
+
+  uint8_t pixfmt = 0x55;
+  write_command(spi, &colmod, 1);
+  write_data(spi, &pixfmt, 1);
+
+  // Send a known row of pixels.
+  write_command(spi, &ramwr, 1);
+  set_cs_dc(spi, false, true);
+  const uint32_t pixel_count = 256;
+  uint32_t npix = pixel_count;
+  for (unsigned p = 0u; p < pixel_count; p++)
+  {
+    pix = (p >= 128);
+    write_buffer(spi, (uint8_t *)&pix, 2u);
+  }
+  spi->wait_idle();
+  set_cs_dc(spi, true, true);
+
+  // TODO: The above does not deassert CS without this delay, although volatile appears to
+  // be used appropriately.
+  delay(100);
+
+  set_address(spi, 0, 0, 127, 10);
+
+  pixfmt = 0x66;
+  write_command(spi, &colmod, 1);
+  write_data(spi, &pixfmt, 1);
+
+  // Read back the pixels.
+  write_command(spi, &ramrd, 1);
+  set_cs_dc(spi, false, true);
+  set_output_bit(spi, LcdOutEnPin, 0x0);
+  npix = pixel_count;
+  for (unsigned p = 0u; p < pixel_count; p++)
+  {
+    read_buffer(spi, (uint8_t *)&pix, 2u);
+    write_hex8b(uart, p); write_str(uart, ": ");
+    write_hex(uart, pix); write_str(uart, "\r\n");
+  }
+  spi->wait_idle();
+  set_cs_dc(spi, true, true);
+  set_output_bit(spi, LcdOutEnPin, 0x1);
+}
+
+  // Note: we must read 4 bytes in order to get 4 bytes of valid data!
+  // The LCD expects a 'dummy clock cycle' between the command write and
+  // the first byte of read data.
+  read_data(spi, &rddid, data, 4);  // Read 24-bit ID register, plus the 'dummy read' byte
+  write_str(uart, "RDDID: ");
+  // Shift the bitstream back to proper byte alignment.
+  data[0] = (data[0] << 1) | (data[1] >> 7);  // Dummy read byte.
+  data[1] = (data[1] << 1) | (data[2] >> 7);  // ID 17:10 - LCD module's manufacturer ID.
+  data[2] = (data[2] << 1) | (data[3] >> 7);  // ID 26:20 - LCD module/driver version ID.
+  write_hex8b(uart, data[0]);
+  write_hex8b(uart, data[1]);
+  write_hex8b(uart, data[2]);
+  write_str(uart, "\r\n");
+
+  read_data(spi, &rddst, data, 5);
+  write_str(uart, "RDDST: ");
+  write_hex8b(uart, data[0]);
+  write_hex8b(uart, data[1]);
+  write_hex8b(uart, data[2]);
+  write_hex8b(uart, data[3]);
+  write_hex8b(uart, data[4]);
+  write_str(uart, "\r\n");
+
+  data[0] = 0xcd;
   read_data(spi, &rdid1, data, 1);
   write_str(uart, "RDID1: ");
-  write_hex(uart, data[0]);
+  write_hex8b(uart, data[0]);
   write_str(uart, "\r\n");
   read_data(spi, &rdid2, data, 1);
   write_str(uart, "RDID2: ");
-  write_hex(uart, data[0]);
+  write_hex8b(uart, data[0]);
   write_str(uart, "\r\n");
   read_data(spi, &rdid3, data, 1);
   write_str(uart, "RDID3: ");
-  write_hex(uart, data[0]);
+  write_hex8b(uart, data[0]);
   write_str(uart, "\r\n");
 
   while (true) {
     asm("");
   }
+#else
+#if LANDSCAPE
+  uint8_t data = ST77_MADCTL_MX | ST77_MADCTL_MV | ST77_MADCTL_RGB;
+#else
+  uint8_t data = ST77_MADCTL_MX | ST77_MADCTL_MY | ST77_MADCTL_RGB;
+#endif
+  write_command(spi, &madctl, 1u);
+  write_data(spi, &data, 1u);
+
+  const uint32_t back_pix = 0x1f00u;
+  fill_rect(spi, 0u, 0u, width - 1u, height - 1u, back_pix);
+
+  int32_t logo_x = (width - img_width) >> 1;
+  int32_t logo_y = (height - img_height) >> 1;
+  int logo_xs = 1, logo_ys = 2;
+  int logo_xd = logo_xs;
+  int logo_yd = logo_ys;
+
+  while (true) {
+    uint16_t logo_y1 = logo_y + img_height - 1u;
+    uint16_t logo_x1 = logo_x + img_width - 1u;
+
+    // Render the logo.
+    draw_image(spi, logo_x, logo_y, logo_x1, logo_y1, (uint8_t *)lowrisc_logo_native);
+
+    // Remove trailing edge(s).
+    if (logo_xd) {
+      // Remove column to the left or right of the image.
+      uint16_t x0 = (logo_xd > 0) ? logo_x - logo_xd : logo_x1 + 1u;
+      uint16_t x1 = (logo_xd < 0) ? logo_x1 - logo_xd : logo_x - 1u;
+      // Increase the height of the column to account for vertical movement.
+      uint16_t y0 = logo_y - ((logo_yd > 0) ? logo_yd : 0);
+      uint16_t y1 = logo_y1 - ((logo_yd < 0) ? logo_yd : 0);
+      // Restore the column to the background colour.
+      fill_rect(spi, x0, y0, x1, y1, back_pix);
+    }
+    if (logo_yd) {
+      // Remove the row above or below the image.
+      uint16_t y0 = (logo_yd > 0) ? logo_y - logo_yd : logo_y1 + 1u;
+      uint16_t y1 = (logo_yd < 0) ? logo_y1 - logo_yd : logo_y - 1u;
+      // Increase the width of the row to account for horizontal movement.
+      uint16_t x0 = logo_x - ((logo_xd > 0) ? logo_xd : 0);
+      uint16_t x1 = logo_x1 - ((logo_xd < 0) ? logo_xd : 0);
+      // Restore the row to the background colour.
+      fill_rect(spi, x0, y0, x1, y1, back_pix);
+    }
+
+    // Determine the new position of the logo.
+    int32_t logo_xn = logo_x + logo_xd;
+    if (logo_xn < 0 || logo_xn + img_width > width) logo_xd = -logo_xd;
+    int32_t logo_yn = logo_y + logo_yd;
+    if (logo_yn < 0 || logo_yn + img_height > height) logo_yd = -logo_yd;
+
+    // Move the logo to its new position.
+    logo_x += logo_xd;
+    logo_y += logo_yd;
+  }
+#endif
 }

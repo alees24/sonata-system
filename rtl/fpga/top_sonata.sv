@@ -117,6 +117,12 @@ module top_sonata
   inout  logic       ah_tmpio12, // CIPO or GP
   inout  logic       ah_tmpio13, // SCLK
 
+  // Sonata Trace port.
+  output logic       ah_tmpio14,
+  output logic       ah_tmpio15,
+  output logic       ah_tmpio16,
+  output logic       ah_tmpio17,
+
   // Arduino shield analog(ue) pins digital inputs
   input logic [5:0]  ard_an_di,
 
@@ -519,6 +525,18 @@ module top_sonata
     .inout_from_pins_o (lcd_cipo),
     .inout_pins_io     (lcd_copi)
   );
+
+  // TODO: Temporarily export LCD SPI traffic to ICSP connector for monitoring.
+  // COPI, CS, SCK, CIPO
+  logic [3:0] icsp;
+  assign {ah_tmpio17, ah_tmpio16, ah_tmpio15, ah_tmpio14} = icsp;
+  always @(posedge clk_sys) begin
+    icsp <= { lcd_copi_int,  // SPI controller output traffic
+              lcd_cs,
+              lcd_clk,
+              lcd_cipo  // All traffic, but not direct I/O pin connection.
+            };
+  end
 
   // 90ns switch time + 10ns margin for FPGA output and otherwise easing timing. If this parameter
   // is adjusted constraints on rs485_de/rs485_ren in synth_timing.xdc must be adjusted to match
