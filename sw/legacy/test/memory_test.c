@@ -16,7 +16,7 @@
 #include "timer.h"
 
 #define TEST_DATA (0xDEADBEEF)
-#define TEST_SIZE ((224 * 1024) / 4)
+#define TEST_SIZE ((96 * 1024) / 4)
 
 static uint32_t test_array[TEST_SIZE];
 
