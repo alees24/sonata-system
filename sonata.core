@@ -84,7 +84,8 @@ parameters:
   SRAMInitFile:
     datatype: str
     description: SRAM initialization file in vmem hex format
-    default: "../../../../../sw/cheri/build/boot/boot_loader.vmem"
+    default: "../../../../../sw/legacy/build/boot/boot.vmem"
+#   default: "../../../../../sw/cheri/build/boot/boot_loader.vmem"
     paramtype: vlogparam
 
   # For value definition, please see ip/prim/rtl/prim_pkg.sv

@@ -84,6 +84,7 @@ load_program() {
     -c "verify_image $ELF_FILE 0x0" \
     -c "echo \"Doing reset\"" \
     -c "reset run" \
+    -d \
     $EXIT_COMMAND
 }
 
