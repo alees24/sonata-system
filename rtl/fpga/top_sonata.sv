@@ -254,9 +254,20 @@ module top_sonata
 
   logic cheri_en;
 
+  // DIP switches are OFF by default and employ a pull up, which means CHERI shall enabled by
   // Enable CHERI by default.
+  // default; sample this once when leaving reset as a development aid during bring up.
   logic enable_cheri;
-  assign enable_cheri = 1'b1;
+  logic cheri_decided;
+  always_ff @(posedge clk_sys or negedge rst_sys_n) begin
+    if (!rst_sys_n) begin
+      cheri_decided <= 1'b0;
+      enable_cheri  <= 1'b1;
+    end else if (!cheri_decided) begin
+      enable_cheri  <= usrSw[7];
+      cheri_decided <= 1'b1;
+    end
+  end
 
   logic rgbled_dout;
   logic [23:0] unused_gp_o;
