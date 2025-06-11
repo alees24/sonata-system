@@ -94,10 +94,10 @@ module top_verilator #(
 
   // Typically a simplified clocking scheme is used for simulations, in which all of the logic runs
   // from a single clock.
-  wire clk_usb   = pSeparatedClocks ? clk_usb_i   : clk_sys_i;
-  wire clk_hr    = pSeparatedClocks ? clk_hr_i    : clk_sys_i;
-  wire clk_hr90p = pSeparatedClocks ? clk_hr90p_i : clk_sys_i;
-  wire clk_hr3x  = pSeparatedClocks ? clk_hr3x_i  : clk_sys_i;
+  wire clk_usb   = pSeparatedClocks ? clk_usb_i   : clk_i;
+  wire clk_hr    = pSeparatedClocks ? clk_hr_i    : clk_i;
+  wire clk_hr90p = pSeparatedClocks ? clk_hr90p_i : clk_i;
+  wire clk_hr3x  = pSeparatedClocks ? clk_hr3x_i  : clk_i;
   // Reset for USB device.
   wire rst_usb_n = rst_ni;
   wire rst_hr_n  = rst_ni;
@@ -172,6 +172,14 @@ module top_verilator #(
   wire unused_io_ = ^{mb1, ah_tmpio10, rph_g18, rph_g17,
                       rph_g16_ce2, rph_g8_ce0, rph_g7_ce1,
                       usrLed};
+
+  // HyperRAM interface.
+  wire [7:0]  hyperram_dq;
+  wire        hyperram_rwds;
+  wire        hyperram_ckp;
+  wire        hyperram_ckn;
+  wire        hyperram_nrst;
+  wire        hyperram_cs;
 
   // Reporting of CHERI enable/disable and any exceptions that occur.
   wire  [CheriErrWidth-1:0] cheri_err;
@@ -336,7 +344,7 @@ module top_verilator #(
     .HyperRAMClkFreq ( HyperRAMClkFreq )
   ) u_sonata_system (
     // Main system clock and reset
-    .clk_sys_i      (clk_sys_i),
+    .clk_sys_i      (clk_i),
     .rst_sys_ni     (rst_ni),
 
     // USB device clock and reset
@@ -417,13 +425,12 @@ module top_verilator #(
 
     .rgbled_dout_o (),
 
-    // SRAM model used for hyperram so don't connect hyperram IO
-    .hyperram_dq  (),
-    .hyperram_rwds(),
-    .hyperram_ckp (),
-    .hyperram_ckn (),
-    .hyperram_nrst(),
-    .hyperram_cs  (),
+    .hyperram_dq      (hyperram_dq),
+    .hyperram_rwds    (hyperram_rwds),
+    .hyperram_ckp     (hyperram_ckp),
+    .hyperram_ckn     (hyperram_ckn),
+    .hyperram_nrst    (hyperram_nrst),
+    .hyperram_cs      (hyperram_cs),
 
     .rs485_tx_enable_o(rs485_tx_enable),
     .rs485_rx_enable_o(rs485_rx_enable),
@@ -500,8 +507,8 @@ module top_verilator #(
     .FREQ ( SysClkFreq  ),
     .EXIT_STRING ( "Safe to exit simulator.\xd8\xaf\xfb\xa0\xc7\xe1\xa9\xd7" )
   ) u_uartdpi (
-    .clk_i  (clk_sys_i  ),
-    .rst_ni (rst_ni     ),
+    .clk_i,
+    .rst_ni,
     .active (1'b1       ),
     .tx_o   (uart_sys_rx),
     .rx_i   (uart_sys_tx)
@@ -649,6 +656,21 @@ module top_verilator #(
     .active(1'b1       ),
     .tx_o  (rs485_uartdpi_tx),
     .rx_i  (rs485_uartdpi_rx)
+  );
+
+  // HyperRAM model (based on W956D8MBYA5I).
+  hyperram_W956 u_hyperram (
+    // Asynchronous reset signal.
+    .rstn   (hyperram_nrst),
+    // Differential clocking for DDR.
+    .ckp    (hyperram_ckp),
+    .ckn    (hyperram_ckn),
+    // Chip Select.
+    .csn    (hyperram_cs),
+    // Bidirectional read/write data strobe.
+    .rwds   (hyperram_rwds),
+    // Bidirectional data bus.
+    .dq     (hyperram_dq)
   );
 
   export "DPI-C" function mhpmcounter_get;

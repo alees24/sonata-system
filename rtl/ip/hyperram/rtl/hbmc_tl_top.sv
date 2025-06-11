@@ -24,6 +24,9 @@
  * ----------------------------------------------------------------------------
  */
 
+//`define HYPERRAM_BUFFER
+`define HYPERRAM_BUFFER_WORDS 32
+
 `include "prim_assert.sv"
 
 module hbmc_tl_top import tlul_pkg::*; #(
@@ -295,8 +298,13 @@ module hbmc_tl_top import tlul_pkg::*; #(
   );
 
   assign cmd_mem_addr      = {{(33 - HyperRAMAddrW){1'b0}}, tl_i.a_address[HyperRAMAddrW-1:1]};
+`ifdef HYPERRAM_BUFFER
+  assign cmd_word_cnt      = cmd_wr_not_rd ? 16'(`HYPERRAM_BUFFER_WORDS << 1) : 16'd2;
+  assign cmd_wrap_not_incr = 1'b1;
+`else
   assign cmd_word_cnt      = 16'd2;
   assign cmd_wrap_not_incr = 1'b0;
+`endif
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 

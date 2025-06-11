@@ -140,7 +140,7 @@ module hbmc_ctrl #
     
     localparam  integer MIN_RWR = INITIAL_LATENCY - 3;                              /* Min Read-Write recovery time */
     
-    localparam  integer MAX_BURST_COUNT = ((C_HBMC_CS_MAX_LOW_TIME_US * 1000) / HBMC_CLOCK_PERIOD_NS - INITIAL_LATENCY * 3);    /* x3 - is a margin */
+    localparam  integer MAX_BURST_COUNT = int'((C_HBMC_CS_MAX_LOW_TIME_US * 1000) / HBMC_CLOCK_PERIOD_NS - INITIAL_LATENCY * 3);    /* x3 - is a margin */
     
 /*----------------------------------------------------------------------------------------------------------------------------*/
     

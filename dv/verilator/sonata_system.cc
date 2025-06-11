@@ -57,11 +57,14 @@ int SonataSystem::Setup(int argc, char **argv, bool &exit_app) {
   const uint32_t nano = 1000u;  // in ps.
   const uint32_t micro = 1000u * nano;
   const uint32_t milli = 1000u * micro;
-  const uint32_t sys_hperiod = micro / 60u;  // 30MHz cycle
+  const uint32_t sys_hperiod = micro / 80u;  // 40MHz cycle
 
   uint32_t usb_hperiod  = micro / 96u;   // 48MHz cycle
-  uint32_t hr_hperiod   = micro / 200u;  // 100MHz cycle
-  uint32_t hr3x_hperiod = micro / 600u;  // 300MHz cycle
+  // Note: calculate the period of the higher frequency clock first because
+  // the period of the 'hr' reference clock must be exactly 3 times longer
+  // to maintain the phase relationship.
+  uint32_t hr3x_hperiod = (micro + 599u) / 600u;  // 300MHz cycle
+  uint32_t hr_hperiod = 3 * hr3x_hperiod;  // 100MHz cycle
 
   // The HyperRAM requires a clock that is phase-shifted by 90 degress.
   uint32_t hr90p_offset = hr_hperiod / 2;
@@ -78,7 +81,7 @@ int SonataSystem::Setup(int argc, char **argv, bool &exit_app) {
   }
 
   // Main system clock must be added first.
-  VerilatorSimClock clk_sys(&_top.clk_sys_i, sys_hperiod, sys_hperiod);
+  VerilatorSimClock clk_sys(&_top.clk_i, sys_hperiod, sys_hperiod);
   // Supplementary clocks.
   VerilatorSimClock clk_usb(&_top.clk_usb_i, usb_hperiod, usb_hperiod);
   VerilatorSimClock clk_hr(&_top.clk_hr_i, hr_hperiod, hr_hperiod);
