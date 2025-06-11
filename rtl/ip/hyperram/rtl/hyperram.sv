@@ -29,7 +29,8 @@ module hyperram import tlul_pkg::*; #(
   output wire       hyperram_nrst,
   output wire       hyperram_cs
 );
-`ifdef USE_HYPERRAM_SIM_MODEL
+// TODO:
+`ifdef WAS_USE_HYPERRAM_SIM_MODEL
   localparam int SRAMModelAddrWidth = $clog2(HyperRAMSize);
   localparam int UnusedParams = HyperRAMClkFreq + HyperRAMSize;
 
