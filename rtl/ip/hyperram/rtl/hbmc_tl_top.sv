@@ -94,23 +94,32 @@ module hbmc_tl_top import tlul_pkg::*; #(
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
+  /* We need the FIFOs to/from the HyperRAM controller core to be wider than the TL-UL bus in
+     order to accomoodate the data rate; burst transfers write 16 bits into the upstream FIFO
+     every cycle, but the Sonata system clock is only 40% of that clock frequency. */
+  //localparam int unsigned HRFifoWidth = 2 * top_pkg::TL_DW;
+  localparam int unsigned HRFifoWidth = top_pkg::TL_DW;
+
   logic idelayctrl_rdy_sync;
   logic clk_idelay;
 
-  /* HBMC command interface */
+  /* Tag memory interface */
   logic                      tag_cmd_req, tag_cmd_wready;
+  logic                      tag_rdata_rready;
+
+  /* HBMC command interface */
   logic                      cmd_wvalid, cmd_wready;
   logic  [HyperRAMAddrW-1:1] cmd_mem_addr;
   logic                [6:0] cmd_word_cnt;
   logic                      cmd_wr_not_rd;
   logic                      cmd_wrap_not_incr;
-  logic                      cmd_ack;
+  logic                [3:0] cmd_seq;
 
   /* Upstream FIFO wires */
   logic [15:0]               ufifo_wr_data;
   logic                      ufifo_wr_last;
   logic                      ufifo_wr_ena;
-  logic [top_pkg::TL_DW-1:0] ufifo_rd_dout;
+  logic [HRFifoWidth-1:0]    ufifo_rd_dout;
   logic [9:0]                ufifo_rd_free;
   logic                      ufifo_rd_last;
   logic                      ufifo_rd_ena;
@@ -118,13 +127,13 @@ module hbmc_tl_top import tlul_pkg::*; #(
 
 
   /* Downstream FIFO wires */
-  logic [15:0]                  dfifo_rd_data;
-  logic [1:0]                   dfifo_rd_strb;
-  logic                         dfifo_rd_ena;
-  logic [top_pkg::TL_DW-1:0]    dfifo_wr_din;
-  logic [top_pkg::TL_DW/8-1:0]  dfifo_wr_strb;
-  logic                         dfifo_wr_ena;
-  logic                         dfifo_wr_full;
+  logic [15:0]               dfifo_rd_data;
+  logic [1:0]                dfifo_rd_strb;
+  logic                      dfifo_rd_ena;
+  logic [HRFifoWidth-1:0]    dfifo_wr_din;
+  logic [HRFifoWidth/8-1:0]  dfifo_wr_strb;
+  logic                      dfifo_wr_ena;
+  logic                      dfifo_wr_full;
 
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
@@ -187,6 +196,8 @@ module hbmc_tl_top import tlul_pkg::*; #(
 /*----------------------------------------------------------------------------------------------------------------------------*/
 // TL-UL Access ports.
 
+logic [3:0] ufifo_rd_seq;
+
 logic tl_tag_bit;
 logic tag_cmd_wcap;
 
@@ -195,6 +206,13 @@ hbmc_tl_port #(
 ) u_ports[NPORTS-1:0](
   .clk_i              (clk_i),
   .rst_ni             (rst_ni),
+
+  // Port numbers.
+`ifdef HYPERRAM_DUAL_PORT
+  .portid_i           (2'b10),
+`else
+  .portid_i           (1'b0),
+`endif
 
   // TL-UL interface.
   .tl_i               (tl_i),
@@ -211,6 +229,7 @@ hbmc_tl_port #(
   .cmd_word_cnt       (cmd_word_cnt),
   .cmd_wr_not_rd      (cmd_wr_not_rd),
   .cmd_wrap_not_incr  (cmd_wrap_not_incr),
+  .cmd_seq            (cmd_seq),
   .tag_cmd_req        (tag_cmd_req),
   .tag_cmd_wready     (tag_cmd_wready),
   .tag_cmd_wcap       (tag_cmd_wcap),
@@ -224,27 +243,43 @@ hbmc_tl_port #(
   .ufifo_rd_ena       (ufifo_rd_ena),
   .ufifo_rd_empty     (ufifo_rd_empty),
   .ufifo_rd_dout      (ufifo_rd_dout),
+  .ufifo_rd_seq       (ufifo_rd_seq),
+  .ufifo_rd_last      (ufifo_rd_last),
+
+  // Tag read data interface.
+  .tag_rdata_rready   (tag_rdata_rready),
   .tl_tag_bit         (tl_tag_bit)
 );
+
+/*----------------------------------------------------------------------------------------------------------------------------*/
+// TODO: Write buffer coalesces word writes to form a burst write.
+`ifdef HYPERRAM_WRITE_BUFFERING
+hyperram_wrbuf #(
+
+) u_wrbuf(
+
+
+);
+`endif
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 // TODO: Arbitrate amongst the access ports; presently there is just a single port.
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
-  localparam  BUS_SYNC_WIDTH = 19 + 7 + 1 + 1;
+  localparam  BUS_SYNC_WIDTH = 19 + 7 + 1 + 1 + 4;
 
   logic                     cmd_rvalid, cmd_rready;
   logic [HyperRAMAddrW-1:1] cmd_mem_addr_dst;
   logic               [6:0] cmd_word_cnt_dst;
   logic                     cmd_wr_not_rd_dst;
   logic                     cmd_wrap_not_incr_dst;
-
+  logic               [3:0] cmd_seq_dst;
 
   logic [BUS_SYNC_WIDTH-1:0] cmd_wdata, cmd_rdata;
 
-  assign cmd_wdata = {cmd_mem_addr, cmd_word_cnt, cmd_wr_not_rd, cmd_wrap_not_incr};
-  assign {cmd_mem_addr_dst, cmd_word_cnt_dst, cmd_wr_not_rd_dst, cmd_wrap_not_incr_dst} = cmd_rdata;
+  assign cmd_wdata = {cmd_mem_addr, cmd_word_cnt, cmd_wr_not_rd, cmd_wrap_not_incr, cmd_seq};
+  assign {cmd_mem_addr_dst, cmd_word_cnt_dst, cmd_wr_not_rd_dst, cmd_wrap_not_incr_dst, cmd_seq_dst} = cmd_rdata;
 
   prim_fifo_async #(
     .Width(BUS_SYNC_WIDTH),
@@ -339,27 +374,34 @@ hbmc_tl_port #(
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
+  /* Return the sequence number from the command so that the data may be steered appropriately */
+  logic [3:0] ufifo_wr_seq;
+  always_ff @(posedge clk_hbmc_0) begin
+    if (cmd_rvalid & cmd_rready) ufifo_wr_seq <= cmd_seq_dst;
+  end
+
   /* Upstream data FIFO */
   hbmc_ufifo #
   (
-      .DATA_WIDTH ( top_pkg::TL_DW )
+      .DATA_WIDTH ( HRFifoWidth )
   )
   hbmc_ufifo_inst
   (
-      .fifo_wr_clk    ( clk_hbmc_0     ),
-      .fifo_wr_nrst   ( rst_hbmc_ni    ),
-      .fifo_wr_din    ( ufifo_wr_data  ),
-      .fifo_wr_last   ( ufifo_wr_last  ),
-      .fifo_wr_ena    ( ufifo_wr_ena   ),
-      .fifo_wr_full   ( /*----NC----*/ ),
+      .fifo_wr_clk    ( clk_hbmc_0      ),
+      .fifo_wr_nrst   ( rst_hbmc_ni     ),
+      .fifo_wr_din    ( ufifo_wr_data   ),
+      .fifo_wr_seq    ( ufifo_wr_seq    ),
+      .fifo_wr_last   ( ufifo_wr_last   ),
+      .fifo_wr_ena    ( ufifo_wr_ena    ),
+      .fifo_wr_full   ( /*----NC----*/  ),
 
-      .fifo_rd_clk    ( clk_i     ),
-      .fifo_rd_nrst   ( rst_ni    ),
-      .fifo_rd_dout   ( ufifo_rd_dout  ),
-      .fifo_rd_free   ( /*----NC----*/ ),
-      .fifo_rd_last   ( ufifo_rd_last  ),
-      .fifo_rd_ena    ( ufifo_rd_ena   ),
-      .fifo_rd_empty  ( ufifo_rd_empty )
+      .fifo_rd_clk    ( clk_i           ),
+      .fifo_rd_nrst   ( rst_ni          ),
+      .fifo_rd_dout   ( ufifo_rd_dout   ),
+      .fifo_rd_seq    ( ufifo_rd_seq    ),
+      .fifo_rd_last   ( ufifo_rd_last   ),
+      .fifo_rd_ena    ( ufifo_rd_ena    ),
+      .fifo_rd_empty  ( ufifo_rd_empty  )
   );
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
@@ -367,7 +409,7 @@ hbmc_tl_port #(
   /* Downstream data FIFO */
   hbmc_dfifo #
   (
-      .DATA_WIDTH ( top_pkg::TL_DW )
+      .DATA_WIDTH ( HRFifoWidth )
   )
   hbmc_dfifo_inst
   (
@@ -441,7 +483,11 @@ hbmc_tl_port #(
   prim_fifo_sync #(
     .Width(1),
     .Depth(TAG_FIFO_DEPTH),
-    .Pass(1'b0)
+//    .Pass(1'b0)
+
+// TODO: This is required when collecting read data from the buffer, but this may not be a complete
+// and/or correct solution? More thought required here.
+.Pass(1'b1)
   ) u_tag_rdata_fifo (
     .clk_i    (clk_i),
     .rst_ni   (rst_ni),
@@ -450,7 +496,7 @@ hbmc_tl_port #(
     .wready_o (),
     .wdata_i  (tag_rdata),
     .rvalid_o (tag_rdata_fifo_rvalid),
-    .rready_i (ufifo_rd_ena),
+    .rready_i (tag_rdata_rready),
     .rdata_o  (tl_tag_bit),
 
     .full_o  (),
@@ -458,6 +504,7 @@ hbmc_tl_port #(
     .err_o   ()
   );
 
+  // TODO: Probably wants some refinement/augmentation.
   `ASSERT(always_tag_rdata_valid_when_read_data_response, ufifo_rd_ena |-> tag_rdata_fifo_rvalid)
 
   assign tag_rdata_valid_d = tag_cmd_valid & ~tag_cmd_out.write;
