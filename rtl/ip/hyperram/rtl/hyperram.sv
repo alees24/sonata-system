@@ -7,9 +7,14 @@
 // It also provides an SRAM model implementation for use in simulations that
 // don't want to include the full hyperram controller RTL and BFM (which in
 // particular require Xilinx encrypted IP models).
+
+//`define HYPERRAM_DUAL_PORT
+
 module hyperram import tlul_pkg::*; #(
   parameter HyperRAMClkFreq = 100_000_000,
-  parameter HyperRAMSize    = 1024 * 1024
+  parameter HyperRAMSize    = 1024 * 1024,
+  // Number of access ports.
+  parameter int unsigned NPORTS = 2
 ) (
   input             clk_i,
   input             rst_ni,
@@ -19,8 +24,13 @@ module hyperram import tlul_pkg::*; #(
   input             clk_hr3x_i,
   input             rst_hr_ni,
 
+`ifdef HYPERRAM_DUAL_PORT
+  input  tl_h2d_t   tl_i[NPORTS],
+  output tl_d2h_t   tl_o[NPORTS],
+`else
   input  tl_h2d_t   tl_i,
   output tl_d2h_t   tl_o,
+`endif
 
   inout  wire [7:0] hyperram_dq,
   inout  wire       hyperram_rwds,
@@ -101,6 +111,7 @@ module hyperram import tlul_pkg::*; #(
     .C_DQ1_IDELAY_TAPS_VALUE(0),
     .C_DQ0_IDELAY_TAPS_VALUE(0),
     .C_ISERDES_CLOCKING_MODE(0),
+    .NPORTS(NPORTS),
     .HyperRAMSize(HyperRAMSize)
   ) u_hbmc_tl_top (
     .clk_i(clk_i),

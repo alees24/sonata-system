@@ -2,6 +2,9 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
+// Support dual ports on whatever is implementing the HyperRAM functionality.
+// `define HYPERRAM_DUAL_PORT
+
 // The Sonata system, which instantiates a CHERIoT Ibex, TileLink Uncached
 // Lightweight bus and a number of common peripherals, usc as I2C, SPI, UART,
 // USB.
@@ -300,8 +303,10 @@ module sonata_system
   tlul_pkg::tl_d2h_t tl_sram_b_d2h;
   tlul_pkg::tl_h2d_t tl_hyperram_us_h2d[2];
   tlul_pkg::tl_d2h_t tl_hyperram_us_d2h[2];
+`ifndef HYPERRAM_DUAL_PORT
   tlul_pkg::tl_h2d_t tl_hyperram_ds_h2d;
   tlul_pkg::tl_d2h_t tl_hyperram_ds_d2h;
+`endif
   tlul_pkg::tl_h2d_t tl_gpio_h2d;
   tlul_pkg::tl_d2h_t tl_gpio_d2h;
   tlul_pkg::tl_h2d_t tl_xadc_h2d;
@@ -517,15 +522,29 @@ module sonata_system
     .clk_i  (clk_sys_i),
     .rst_ni (rst_sys_ni),
 
+`ifdef HYPERRAM_DUAL_PORT
+    // Data access port.
+    .tl_a_i (tl_hyperram_us_h2d[0]),
+    .tl_a_o (tl_hyperram_us_d2h[0]),
+    // Instruction access port.
+    .tl_b_i (tl_hyperram_us_h2d[1]),
+    .tl_b_o (tl_hyperram_us_d2h[1]),
+`else
     .tl_a_i (tl_hyperram_ds_h2d),
     .tl_a_o (tl_hyperram_ds_d2h),
     .tl_b_i (),
     .tl_b_o ()
+`endif
   );
 `else
   hyperram #(
     .HyperRAMClkFreq ( HyperRAMClkFreq ),
-    .HyperRAMSize    ( HyperRAMSize    )
+    .HyperRAMSize    ( HyperRAMSize    ),
+`ifdef HYPERRAM_DUAL_PORT
+    .NPORTS          ( 2               )
+`else
+    .NPORTS          ( 1               )
+`endif
   ) u_hyperram (
     .clk_i  (clk_sys_i),
     .rst_ni (rst_sys_ni),
@@ -535,8 +554,13 @@ module sonata_system
     .clk_hr3x_i,
     .rst_hr_ni,
 
+`ifdef HYPERRAM_DUAL_PORT
+    .tl_i (tl_hyperram_us_h2d),
+    .tl_o (tl_hyperram_us_d2h),
+`else
     .tl_i (tl_hyperram_ds_h2d),
     .tl_o (tl_hyperram_ds_d2h),
+`endif
 
     .hyperram_dq,
     .hyperram_rwds,
@@ -547,15 +571,15 @@ module sonata_system
   );
 `endif
 
-  // Manual M:1 socket instantiation as xbar generator cannot deal with multiple ports for one
-  // device and we want to utilize the dual port SRAM. So totally separate crossbars are generated
-  // for the dside and iside then tlul_socket_m1 is used here to connect the two crossbars to the
-  // one downstream hyperram tilelink port.
+  // Manual M:1 socket instantiation as xbar generator cannot deal with multiple ports, so totally
+  // separate crossbars are generated for the dside and iside then tlul_socket_m1 is used here to
+  // connect the two crossbars to the one downstream hyperram tilelink port.
   //
   // US == Upstream
   // DS == Downstream
   //
   // US is the Ibex/Host end, DS is the Hyperram end.
+`ifndef HYPERRAM_DUAL_PORT
   tlul_socket_m1 #(
     .HReqDepth (8'h0),
     .HRspDepth (8'h0),
@@ -570,6 +594,7 @@ module sonata_system
     .tl_d_o(tl_hyperram_ds_h2d),
     .tl_d_i(tl_hyperram_ds_d2h)
   );
+`endif
 
   tlul_socket_m1 #(
     .HReqDepth (8'h0),
