@@ -24,6 +24,8 @@
  * ----------------------------------------------------------------------------
  */
 
+// `define HYPERRAM_DUAL_PORT
+
 `include "prim_assert.sv"
 
 module hbmc_tl_top import tlul_pkg::*; #(
@@ -59,6 +61,7 @@ module hbmc_tl_top import tlul_pkg::*; #(
   parameter [4:0]   C_DQ1_IDELAY_TAPS_VALUE  = 0,
   parameter [4:0]   C_DQ0_IDELAY_TAPS_VALUE  = 0,
 
+  parameter int unsigned NPORTS = 2,
   parameter integer HyperRAMSize = 1024 * 1024 // 1 MiB
 )
 (
@@ -70,8 +73,13 @@ module hbmc_tl_top import tlul_pkg::*; #(
   input  clk_iserdes,
   input  clk_idelay_ref,
 
+`ifdef HYPERRAM_DUAL_PORT
+  input  tl_h2d_t tl_i[NPORTS],
+  output tl_d2h_t tl_o[NPORTS],
+`else
   input  tl_h2d_t tl_i,
   output tl_d2h_t tl_o,
+`endif
 
   /* HyperBus Interface Port */
   output wire          hb_ck_p,
@@ -89,15 +97,14 @@ module hbmc_tl_top import tlul_pkg::*; #(
   logic idelayctrl_rdy_sync;
   logic clk_idelay;
 
-
   /* HBMC command interface */
-  logic            tag_cmd_req, tag_cmd_wready;
-  logic            cmd_wvalid, cmd_wready;
-  logic    [31:0]  cmd_mem_addr;
-  logic    [15:0]  cmd_word_cnt;
-  logic            cmd_wr_not_rd;
-  logic            cmd_wrap_not_incr;
-  logic            cmd_ack;
+  logic                      tag_cmd_req, tag_cmd_wready;
+  logic                      cmd_wvalid, cmd_wready;
+  logic  [HyperRAMAddrW-1:1] cmd_mem_addr;
+  logic                [6:0] cmd_word_cnt;
+  logic                      cmd_wr_not_rd;
+  logic                      cmd_wrap_not_incr;
+  logic                      cmd_ack;
 
   /* Upstream FIFO wires */
   logic [15:0]               ufifo_wr_data;
@@ -178,138 +185,63 @@ module hbmc_tl_top import tlul_pkg::*; #(
   endgenerate
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
+// TL-UL Access ports.
 
-  // Metadata from inbound tilelink transactions that needs to be saved to produce the response
-  typedef struct packed {
-    logic [top_pkg::TL_AIW-1:0] tl_source;
-    logic [top_pkg::TL_SZW-1:0] tl_size;
-    logic                       cmd_wr_not_rd;
-  } tl_req_info_t;
+logic tl_tag_bit;
+logic tag_cmd_wcap;
 
-  tl_req_info_t tl_req_fifo_wdata, tl_req_fifo_rdata;
+hbmc_tl_port #(
+  .HyperRAMAddrW      (HyperRAMAddrW)
+) u_ports[NPORTS-1:0](
+  .clk_i              (clk_i),
+  .rst_ni             (rst_ni),
 
-  logic tl_req_fifo_wvalid, tl_req_fifo_wready;
-  logic tl_req_fifo_rvalid, tl_req_fifo_rready;
+  // TL-UL interface.
+  .tl_i               (tl_i),
+  .tl_o               (tl_o),
 
-  logic tl_tag_bit, tl_a_ready;
+  // Interface to write buffer.
+  // TODO: What write buffer?
+  //  .wrbuf_b
 
-  tl_d2h_t tl_o_int;
+  // Command data to the HyperRAM controller.
+  .cmd_wvalid         (cmd_wvalid),
+  .cmd_wready         (cmd_wready),
+  .cmd_mem_addr       (cmd_mem_addr),
+  .cmd_word_cnt       (cmd_word_cnt),
+  .cmd_wr_not_rd      (cmd_wr_not_rd),
+  .cmd_wrap_not_incr  (cmd_wrap_not_incr),
+  .tag_cmd_req        (tag_cmd_req),
+  .tag_cmd_wready     (tag_cmd_wready),
+  .tag_cmd_wcap       (tag_cmd_wcap),
+  .dfifo_wr_ena       (dfifo_wr_ena),
+  .dfifo_wr_full      (dfifo_wr_full),
+  .dfifo_wr_strb      (dfifo_wr_strb),
+  .dfifo_wr_din       (dfifo_wr_din),
 
-  // Logic for handling incoming tilelink requests
-  always_comb begin
-    cmd_wvalid         = 1'b0;
-    cmd_wr_not_rd      = 1'b0;
-    tag_cmd_req        = 1'b0;
-    dfifo_wr_ena       = 1'b0;
-    tl_req_fifo_wvalid = 1'b0;
-    tl_a_ready         = 1'b0;
+  // Read data from the HyperRAM controller.
+  // TODO: Probably want to change this interface once stable.
+  .ufifo_rd_ena       (ufifo_rd_ena),
+  .ufifo_rd_empty     (ufifo_rd_empty),
+  .ufifo_rd_dout      (ufifo_rd_dout),
+  .tl_tag_bit         (tl_tag_bit)
+);
 
-    if (tl_i.a_valid && tl_req_fifo_wready && tag_cmd_wready && cmd_wready &&
-      (tl_i.a_opcode == Get || ~dfifo_wr_full)) begin
-      // We can accept an incoming tilelink transaction when we've got space in the hyperram, tag
-      // and tilelink request FIFOs. If we're taking in a write transaction we also need space in the
-      // downstream FIFO(dfifo) for the write data
-
-      // Write to the relevant FIFOs and indicate ready on tilelink A channel
-      cmd_wvalid         = 1'b1;
-      tag_cmd_req        = 1'b1;
-      tl_req_fifo_wvalid = 1'b1;
-      tl_a_ready         = 1'b1;
-
-      if (tl_i.a_opcode != Get) begin
-        cmd_wr_not_rd    = 1'b1;
-        dfifo_wr_ena     = 1'b1;
-      end
-    end
-  end
-
-  assign dfifo_wr_strb = tl_i.a_mask;
-  assign dfifo_wr_din  = tl_i.a_data;
-
-  assign tl_req_fifo_wdata = '{
-    tl_source     : tl_i.a_source,
-    tl_size       : tl_i.a_size,
-    cmd_wr_not_rd : cmd_wr_not_rd
-  };
-
-  // Logic for sending out tilelink responses
-  always_comb begin
-    tl_o_int           = '0;
-    tl_req_fifo_rready = 1'b0;
-    ufifo_rd_ena       = 1'b0;
-
-    if (tl_req_fifo_rvalid) begin
-      // We have an incoming request that needs a response
-      if (tl_req_fifo_rdata.cmd_wr_not_rd) begin
-        // If it's a write then return an immediate response (early response is reasonable as any
-        // read that could observe the memory cannot occur until the write has actually happened)
-        tl_o_int.d_valid   = 1'b1;
-        tl_req_fifo_rready = tl_i.d_ready;
-      end else begin
-        // Otherwise wait until we have read data to return
-        tl_o_int.d_valid   = ~ufifo_rd_empty;
-        // Only dequeue read data from the upstream FIFO (ufifo) and request FIFO when the tilelink
-        // D channel is ready
-        ufifo_rd_ena       = tl_i.d_ready & ~ufifo_rd_empty;
-        tl_req_fifo_rready = ufifo_rd_ena;
-      end
-    end
-
-    tl_o_int.d_opcode          = tl_req_fifo_rdata.cmd_wr_not_rd ? AccessAck : AccessAckData;
-    tl_o_int.d_size            = tl_req_fifo_rdata.tl_size;
-    tl_o_int.d_source          = tl_req_fifo_rdata.tl_source;
-    tl_o_int.d_data            = ufifo_rd_dout;
-    tl_o_int.d_user.capability = tl_tag_bit;
-    tl_o_int.a_ready           = tl_a_ready;
-  end
-
-  // Generate integrity for outgoing response
-  tlul_rsp_intg_gen #(
-    .EnableRspIntgGen(0),
-    .EnableDataIntgGen(0)
-  ) u_tlul_rsp_intg_gen (
-    .tl_i(tl_o_int),
-    .tl_o(tl_o)
-  );
-
-  localparam TL_REQ_FIFO_DEPTH = 4;
-
-  prim_fifo_sync #(
-    .Width($bits(tl_req_info_t)),
-    .Depth(TL_REQ_FIFO_DEPTH),
-    .Pass(1'b0)
-  ) u_tl_req_fifo (
-    .clk_i    (clk_i),
-    .rst_ni   (rst_ni),
-    .clr_i    (1'b0),
-    .wvalid_i (tl_req_fifo_wvalid),
-    .wready_o (tl_req_fifo_wready),
-    .wdata_i  (tl_req_fifo_wdata),
-    .rvalid_o (tl_req_fifo_rvalid),
-    .rready_i (tl_req_fifo_rready),
-    .rdata_o  (tl_req_fifo_rdata),
-
-    .full_o  (),
-    .depth_o (),
-    .err_o   ()
-  );
-
-  assign cmd_mem_addr      = {{(33 - HyperRAMAddrW){1'b0}}, tl_i.a_address[HyperRAMAddrW-1:1]};
-  assign cmd_word_cnt      = 16'd2;
-  assign cmd_wrap_not_incr = 1'b0;
+/*----------------------------------------------------------------------------------------------------------------------------*/
+// TODO: Arbitrate amongst the access ports; presently there is just a single port.
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
-  localparam  BUS_SYNC_WIDTH = 32 + 16 + 1 + 1;
+  localparam  BUS_SYNC_WIDTH = 19 + 7 + 1 + 1;
 
-  logic            cmd_rvalid, cmd_rready;
-  logic    [31:0]  cmd_mem_addr_dst;
-  logic    [15:0]  cmd_word_cnt_dst;
-  logic            cmd_wr_not_rd_dst;
-  logic            cmd_wrap_not_incr_dst;
+  logic                     cmd_rvalid, cmd_rready;
+  logic [HyperRAMAddrW-1:1] cmd_mem_addr_dst;
+  logic               [6:0] cmd_word_cnt_dst;
+  logic                     cmd_wr_not_rd_dst;
+  logic                     cmd_wrap_not_incr_dst;
 
 
-  logic    [BUS_SYNC_WIDTH - 1:0]  cmd_wdata, cmd_rdata;
+  logic [BUS_SYNC_WIDTH-1:0] cmd_wdata, cmd_rdata;
 
   assign cmd_wdata = {cmd_mem_addr, cmd_word_cnt, cmd_wr_not_rd, cmd_wrap_not_incr};
   assign {cmd_mem_addr_dst, cmd_word_cnt_dst, cmd_wr_not_rd_dst, cmd_wrap_not_incr_dst} = cmd_rdata;
@@ -334,6 +266,12 @@ module hbmc_tl_top import tlul_pkg::*; #(
   );
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
+
+  // Widened address and word count.
+  logic [31:0] cmd_mem_addr_full;
+  logic [15:0] cmd_word_cnt_full;
+  assign cmd_mem_addr_full = 32'(cmd_mem_addr_dst);
+  assign cmd_word_cnt_full = 16'(cmd_word_cnt_dst);
 
   hbmc_ctrl #
   (
@@ -378,8 +316,8 @@ module hbmc_tl_top import tlul_pkg::*; #(
 
       .cmd_valid          ( cmd_rvalid            ),
       .cmd_ready          ( cmd_rready            ),
-      .cmd_mem_addr       ( cmd_mem_addr_dst      ),
-      .cmd_word_count     ( cmd_word_cnt_dst      ),
+      .cmd_mem_addr       ( cmd_mem_addr_full     ),
+      .cmd_word_count     ( cmd_word_cnt_full     ),
       .cmd_wr_not_rd      ( cmd_wr_not_rd_dst     ),
       .cmd_wrap_not_incr  ( cmd_wrap_not_incr_dst ),
 
@@ -474,9 +412,10 @@ module hbmc_tl_top import tlul_pkg::*; #(
 
   assign tag_cmd_in.addr  = cmd_mem_addr[TAG_ADDR_W + 1:2];
   assign tag_cmd_in.write = cmd_wr_not_rd;
-  assign tag_cmd_in.wdata = tl_i.a_user.capability;
+  assign tag_cmd_in.wdata = tag_cmd_wcap;
 
-  prim_fifo_sync #(
+  // TODO: Justify the existence of this FIFO, or remove it.
+  /*prim_fifo_sync #(
     .Width($bits(tag_cmd_t)),
     .Depth(TAG_FIFO_DEPTH),
     .Pass(1'b0)
@@ -494,7 +433,10 @@ module hbmc_tl_top import tlul_pkg::*; #(
     .full_o  (),
     .depth_o (),
     .err_o   ()
-  );
+  );*/
+  assign tag_cmd_valid = tag_cmd_req;
+  assign tag_cmd_wready = 1'b1;
+  assign tag_cmd_out = tag_cmd_in;
 
   prim_fifo_sync #(
     .Width(1),
