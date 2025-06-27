@@ -11,6 +11,7 @@ filesets:
       - open_hbmc:hyperram:controller
     files:
       - rtl/hyperram.sv
+      - rtl/hyperram_rdbuf.sv
       - rtl/hbmc_tl_port.sv
       - rtl/hbmc_tl_top.sv
     file_type: systemVerilogSource
