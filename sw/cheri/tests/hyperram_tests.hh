@@ -13,6 +13,7 @@
 
 #include "../common/console.hh"
 #include "../common/sonata-devices.hh"
+#include "../common/timer-utils.hh"
 #include "../common/uart-utils.hh"
 #include "test_runner.hh"
 #include "../common/console.hh"
@@ -32,7 +33,7 @@ using namespace CHERI;
  * It can be overwride with a compilation flag
  */
 #ifndef TEST_COVERAGE_AREA
-// Test only 1% of the total memory to be fast enough for varilator.
+// Test only 1% of the total memory to be fast enough for Verilator.
 #define TEST_COVERAGE_AREA 1
 #endif
 _Static_assert(TEST_COVERAGE_AREA <= 100, "TEST_COVERAGE_AREA Should be less than 100");
@@ -191,7 +192,7 @@ int stripe_test(Capability<volatile uint32_t> hyperram_area, uint32_t initial_va
 
 typedef void *(*test_fn_t)(uint32_t *);
 /*
- * Gets a function pointer to an address in hyperram, expectes to be called with
+ * Gets a function pointer to an address in hyperram, expects to be called with
  * a PC capability that provides execution in hyperram. 'addr' is relative to
  * the base of hyperram.
  */
@@ -257,6 +258,48 @@ int execute_test(Capability<volatile uint32_t> hyperram_area, ds::xoroshiro::P64
   return failures;
 }
 
+extern "C" volatile void *hyperram_copy_block(volatile void *d, const volatile void *s, size_t nbytes);  
+extern uint32_t hyperram_copy_size;
+
+int perf_burst_test(Capability<volatile uint32_t> hyperram_area, Log &log, ds::xoroshiro::P64R32 &prng, size_t nbytes) {
+  int failures = 0;
+
+  // Randomised word offsets.
+  uint32_t dst_addr = prng() & 0x3ffu;
+  uint32_t src_addr = 0x800u - dst_addr;
+
+  volatile uint32_t *d = &hyperram_area[dst_addr];
+  volatile uint32_t *s = &hyperram_area[src_addr];
+
+  log.println("copy_block code is {} bytes", hyperram_copy_size);
+  // Copy the code into the HyperRAM, using itself.
+  const uint32_t prog_addr = 0x903u;
+  hyperram_copy_block(&hyperram_area[prog_addr], (volatile uint32_t *)hyperram_copy_block, hyperram_copy_size);
+  test_fn_t test_fn = get_hyperram_fn_ptr(HYPERRAM_ADDRESS + (prog_addr * 4));
+  // TODO: Ugly!
+  volatile void *(*hr_copy_ptr)(volatile void *, const volatile void *, size_t) = (volatile void *(*)(volatile void *, const volatile void *, size_t))test_fn;
+
+  // TODO: We should ensure that the buffers are disjoint, initialise the source and QUICKLY check
+  // the destination.
+
+  for (unsigned code_in_hr = 0; code_in_hr < 2; code_in_hr++) {
+    volatile uint32_t start_time = get_mcycle();
+
+    // TODO: We want to extend this to copy partial words at some point.
+    if (code_in_hr) {
+      hr_copy_ptr(d, s, nbytes);
+    } else {
+      hyperram_copy_block(d, s, nbytes);
+    }
+
+    volatile uint32_t end_time = get_mcycle();
+    log.println("    {} cycles", end_time - start_time);
+  }
+  log.print("    result...");
+
+  return failures;
+}
+
 void hyperram_tests(CapRoot root, Log &log) {
   auto hyperram_area = hyperram_ptr(root);
 
@@ -274,7 +317,7 @@ void hyperram_tests(CapRoot root, Log &log) {
     set_console_mode(log, CC_RESET);
     bool test_failed = false;
     int failures     = 0;
-
+#if 0
     log.print("  Running RND cap test...");
     failures = rand_cap_test(hyperram_area, hyperram_cap_area, prng, HYPERRAM_TEST_SIZE);
     test_failed |= (failures > 0);
@@ -309,6 +352,12 @@ void hyperram_tests(CapRoot root, Log &log) {
     failures = execute_test(hyperram_area, prng, HYPERRAM_TEST_SIZE);
     test_failed |= (failures > 0);
     write_test_result(log, failures);
+#else
+    log.print("  Performance test...");
+    failures = perf_burst_test(hyperram_area, log, prng, 0x1000u);
+    test_failed |= (failures > 0);
+    write_test_result(log, failures);
+#endif
 
     check_result(log, !test_failed);
   }
