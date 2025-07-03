@@ -2,9 +2,6 @@
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
-// Support dual ports on whatever is implementing the HyperRAM functionality.
-// `define HYPERRAM_DUAL_PORT
-
 // The Sonata system, which instantiates a CHERIoT Ibex, TileLink Uncached
 // Lightweight bus and a number of common peripherals, usc as I2C, SPI, UART,
 // USB.
@@ -301,12 +298,8 @@ module sonata_system
   tlul_pkg::tl_d2h_t tl_sram_a_d2h;
   tlul_pkg::tl_h2d_t tl_sram_b_h2d;
   tlul_pkg::tl_d2h_t tl_sram_b_d2h;
-  tlul_pkg::tl_h2d_t tl_hyperram_us_h2d[2];
-  tlul_pkg::tl_d2h_t tl_hyperram_us_d2h[2];
-`ifndef HYPERRAM_DUAL_PORT
-  tlul_pkg::tl_h2d_t tl_hyperram_ds_h2d;
-  tlul_pkg::tl_d2h_t tl_hyperram_ds_d2h;
-`endif
+  tlul_pkg::tl_h2d_t tl_hyperram_h2d[2];
+  tlul_pkg::tl_d2h_t tl_hyperram_d2h[2];
   tlul_pkg::tl_h2d_t tl_gpio_h2d;
   tlul_pkg::tl_d2h_t tl_gpio_d2h;
   tlul_pkg::tl_h2d_t tl_xadc_h2d;
@@ -360,8 +353,8 @@ module sonata_system
     // Device interfaces.
     .tl_sram_o        (tl_sram_a_h2d),
     .tl_sram_i        (tl_sram_a_d2h),
-    .tl_hyperram_o    (tl_hyperram_us_h2d[0]),
-    .tl_hyperram_i    (tl_hyperram_us_d2h[0]),
+    .tl_hyperram_o    (tl_hyperram_h2d[0]),
+    .tl_hyperram_i    (tl_hyperram_d2h[0]),
     .tl_rev_tag_o     (tl_rev_tag_h2d),
     .tl_rev_tag_i     (tl_rev_tag_d2h),
     .tl_gpio_o        (tl_gpio_h2d),
@@ -410,8 +403,8 @@ module sonata_system
     // Devices.
     .tl_sram_o     (tl_sram_b_h2d),
     .tl_sram_i     (tl_sram_b_d2h),
-    .tl_hyperram_o (tl_hyperram_us_h2d[1]),
-    .tl_hyperram_i (tl_hyperram_us_d2h[1]),
+    .tl_hyperram_o (tl_hyperram_h2d[1]),
+    .tl_hyperram_i (tl_hyperram_d2h[1]),
     .tl_dbg_dev_o  (tl_dbg_dev_us_h2d[0]),
     .tl_dbg_dev_i  (tl_dbg_dev_us_d2h[0]),
 
@@ -522,29 +515,18 @@ module sonata_system
     .clk_i  (clk_sys_i),
     .rst_ni (rst_sys_ni),
 
-`ifdef HYPERRAM_DUAL_PORT
     // Data access port.
-    .tl_a_i (tl_hyperram_us_h2d[0]),
-    .tl_a_o (tl_hyperram_us_d2h[0]),
+    .tl_a_i (tl_hyperram_h2d[0]),
+    .tl_a_o (tl_hyperram_d2h[0]),
     // Instruction access port.
-    .tl_b_i (tl_hyperram_us_h2d[1]),
-    .tl_b_o (tl_hyperram_us_d2h[1]),
-`else
-    .tl_a_i (tl_hyperram_ds_h2d),
-    .tl_a_o (tl_hyperram_ds_d2h),
-    .tl_b_i (),
-    .tl_b_o ()
-`endif
+    .tl_b_i (tl_hyperram_h2d[1]),
+    .tl_b_o (tl_hyperram_d2h[1])
   );
 `else
   hyperram #(
     .HyperRAMClkFreq ( HyperRAMClkFreq ),
     .HyperRAMSize    ( HyperRAMSize    ),
-`ifdef HYPERRAM_DUAL_PORT
-    .NPORTS          ( 2               )
-`else
-    .NPORTS          ( 1               )
-`endif
+    .NumPorts        ( 2               )
   ) u_hyperram (
     .clk_i  (clk_sys_i),
     .rst_ni (rst_sys_ni),
@@ -554,13 +536,8 @@ module sonata_system
     .clk_hr3x_i,
     .rst_hr_ni,
 
-`ifdef HYPERRAM_DUAL_PORT
-    .tl_i (tl_hyperram_us_h2d),
-    .tl_o (tl_hyperram_us_d2h),
-`else
-    .tl_i (tl_hyperram_ds_h2d),
-    .tl_o (tl_hyperram_ds_d2h),
-`endif
+    .tl_i (tl_hyperram_h2d),
+    .tl_o (tl_hyperram_d2h),
 
     .hyperram_dq,
     .hyperram_rwds,
@@ -568,31 +545,6 @@ module sonata_system
     .hyperram_ckn,
     .hyperram_nrst,
     .hyperram_cs
-  );
-`endif
-
-  // Manual M:1 socket instantiation as xbar generator cannot deal with multiple ports, so totally
-  // separate crossbars are generated for the dside and iside then tlul_socket_m1 is used here to
-  // connect the two crossbars to the one downstream hyperram tilelink port.
-  //
-  // US == Upstream
-  // DS == Downstream
-  //
-  // US is the Ibex/Host end, DS is the Hyperram end.
-`ifndef HYPERRAM_DUAL_PORT
-  tlul_socket_m1 #(
-    .HReqDepth (8'h0),
-    .HRspDepth (8'h0),
-    .DReqDepth (4'h0),
-    .DRspDepth (4'h0),
-    .M         (2)
-  ) u_hyperram_tl_socket (
-    .clk_i (clk_sys_i),
-    .rst_ni(rst_sys_ni),
-    .tl_h_i(tl_hyperram_us_h2d),
-    .tl_h_o(tl_hyperram_us_d2h),
-    .tl_d_o(tl_hyperram_ds_h2d),
-    .tl_d_i(tl_hyperram_ds_d2h)
   );
 `endif
 

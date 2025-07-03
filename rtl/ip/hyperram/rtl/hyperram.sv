@@ -8,13 +8,11 @@
 // don't want to include the full hyperram controller RTL and BFM (which in
 // particular require Xilinx encrypted IP models).
 
-//`define HYPERRAM_DUAL_PORT
-
 module hyperram import tlul_pkg::*; #(
   parameter HyperRAMClkFreq = 100_000_000,
   parameter HyperRAMSize    = 1024 * 1024,
   // Number of access ports.
-  parameter int unsigned NPORTS = 2
+  parameter int unsigned NumPorts = 2
 ) (
   input             clk_i,
   input             rst_ni,
@@ -24,13 +22,8 @@ module hyperram import tlul_pkg::*; #(
   input             clk_hr3x_i,
   input             rst_hr_ni,
 
-`ifdef HYPERRAM_DUAL_PORT
-  input  tl_h2d_t   tl_i[NPORTS],
-  output tl_d2h_t   tl_o[NPORTS],
-`else
-  input  tl_h2d_t   tl_i,
-  output tl_d2h_t   tl_o,
-`endif
+  input  tl_h2d_t tl_i[NumPorts],
+  output tl_d2h_t tl_o[NumPorts],
 
   inout  wire [7:0] hyperram_dq,
   inout  wire       hyperram_rwds,
@@ -40,11 +33,10 @@ module hyperram import tlul_pkg::*; #(
   output wire       hyperram_cs
 );
 `ifdef USE_HYPERRAM_SIM_MODEL
+  // This is a simple SRAM implementation that may be used in simulation if modelling of the
+  // behaviour/timing of the HyperRAM is not required.
   localparam int SRAMModelAddrWidth = $clog2(HyperRAMSize);
   localparam int UnusedParams = HyperRAMClkFreq + HyperRAMSize;
-
-  tl_h2d_t unused_tl_b;
-  assign unused_tl_b = '0;
 
   logic [7:0] unused_hyperram_dq;
   logic       unused_hyperram_rwds;
@@ -63,24 +55,41 @@ module hyperram import tlul_pkg::*; #(
   assign unused_clk_hr3x      = clk_hr3x_i;
   assign unused_rst_hr        = rst_hr_ni;
 
-  // TODO: Consider adding extra latency to roughly model the performance of the
-  // real hyperram controller
-  sram #(
-    .AddrWidth       ( SRAMModelAddrWidth ),
-    .DataWidth       ( 32                 ),
-    .DataBitsPerMask ( 8                  )
-  ) u_hyperram_model (
-    .clk_i,
-    .rst_ni,
+  if (NumPorts > 1) begin : gen_dual_port
+    // Dual-ported SRAM supports the LSU and Instruction Fetching.
+    sram #(
+      .AddrWidth       ( SRAMModelAddrWidth ),
+      .DataWidth       ( 32                 ),
+      .DataBitsPerMask ( 8                  )
+    ) u_hyperram_model (
+      .clk_i,
+      .rst_ni,
 
-    .tl_a_i (tl_i),
-    .tl_a_o (tl_o),
+      .tl_a_i (tl_i[0]),
+      .tl_a_o (tl_o[0]),
 
-    .tl_b_i (unused_tl_b),
-    .tl_b_o ()
-  );
+      .tl_b_i (tl_i[1]),
+      .tl_b_o (tl_o[1])
+    );
+  end else begin : gen_single_port
+    // Single, shared port.
+    tl_h2d_t unused_tl_b;
+    assign unused_tl_b = '0;
+    sram #(
+      .AddrWidth       ( SRAMModelAddrWidth ),
+      .DataWidth       ( 32                 ),
+      .DataBitsPerMask ( 8                  )
+    ) u_hyperram_model (
+      .clk_i,
+      .rst_ni,
 
+      .tl_a_i (tl_i[0]),
+      .tl_a_o (tl_o[0]),
 
+      .tl_b_i (unused_tl_b),
+      .tl_b_o ()
+    );
+  end
 `else
   hbmc_tl_top #(
     .C_HBMC_CLOCK_HZ(HyperRAMClkFreq),
@@ -111,7 +120,7 @@ module hyperram import tlul_pkg::*; #(
     .C_DQ1_IDELAY_TAPS_VALUE(0),
     .C_DQ0_IDELAY_TAPS_VALUE(0),
     .C_ISERDES_CLOCKING_MODE(0),
-    .NPORTS(NPORTS),
+    .NumPorts(NumPorts),
     .HyperRAMSize(HyperRAMSize)
   ) u_hbmc_tl_top (
     .clk_i(clk_i),
