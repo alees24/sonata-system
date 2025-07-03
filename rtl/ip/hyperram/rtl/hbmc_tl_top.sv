@@ -24,8 +24,6 @@
  * ----------------------------------------------------------------------------
  */
 
-// `define HYPERRAM_DUAL_PORT
-
 `include "prim_assert.sv"
 
 module hbmc_tl_top import tlul_pkg::*; #(
@@ -61,7 +59,7 @@ module hbmc_tl_top import tlul_pkg::*; #(
   parameter [4:0]   C_DQ1_IDELAY_TAPS_VALUE  = 0,
   parameter [4:0]   C_DQ0_IDELAY_TAPS_VALUE  = 0,
 
-  parameter int unsigned NPORTS = 2,
+  parameter int unsigned NumPorts = 2,
   parameter integer HyperRAMSize = 1024 * 1024 // 1 MiB
 )
 (
@@ -73,13 +71,8 @@ module hbmc_tl_top import tlul_pkg::*; #(
   input  clk_iserdes,
   input  clk_idelay_ref,
 
-`ifdef HYPERRAM_DUAL_PORT
-  input  tl_h2d_t tl_i[NPORTS],
-  output tl_d2h_t tl_o[NPORTS],
-`else
-  input  tl_h2d_t tl_i,
-  output tl_d2h_t tl_o,
-`endif
+  input  tl_h2d_t tl_i[NumPorts],
+  output tl_d2h_t tl_o[NumPorts],
 
   /* HyperBus Interface Port */
   output wire          hb_ck_p,
@@ -90,36 +83,60 @@ module hbmc_tl_top import tlul_pkg::*; #(
   inout  wire    [7:0] hb_dq
 );
 
-  localparam integer HyperRAMAddrW = $clog2(HyperRAMSize);
+  // Two TL-UL access ports.
+  localparam int unsigned PortD = 0;
+  localparam int unsigned PortI = 1;
+
+  // Width of port ID numbers, in bits.
+  localparam int unsigned PortIDWidth = $clog2(NumPorts);
+  // Up to 4 outstanding requests from a port, +1 for invalidation and a further bit for the
+  // port number of the requester.
+  localparam int unsigned SeqWidth = PortIDWidth + 3;
+
+  localparam int unsigned HyperRAMAddrW = $clog2(HyperRAMSize);
+  localparam int unsigned ABIT = $clog2(top_pkg::TL_DW / 8);
+  // Use 32-byte bursts for performance, whilst reducing the penalty of wasted burst reads.
+  localparam int unsigned Log2BurstLen = 5;
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
-  /* We need the FIFOs to/from the HyperRAM controller core to be wider than the TL-UL bus in
-     order to accomoodate the data rate; burst transfers write 16 bits into the upstream FIFO
-     every cycle, but the Sonata system clock is only 40% of that clock frequency. */
-  //localparam int unsigned HRFifoWidth = 2 * top_pkg::TL_DW;
-  localparam int unsigned HRFifoWidth = top_pkg::TL_DW;
+  /* We need the Upstream FIFO from the HyperRAM controller core to accommodate an entire
+     burst read. Upstream transfers write 16 bits into the upstream FIFO every cycle, but the
+     Sonata system clock is only 40% of that clock frequency. Additionally, because of the CDC
+     into the slower clock domain, it can take 4 system clock cycles to collect the first word.
+  */
+  localparam int unsigned UDataWidth = top_pkg::TL_DW;
+  localparam int unsigned UFIFODepth = 1 << (Log2BurstLen - ABIT);
+
+  /* The Downstream FIFO to the HyperRAM controller must be wide enough and deep enough to
+   * accommodate all of the write data for a burst, because once the write command data will be
+   * extracted faster than the system clock can supply it.
+   */
+  localparam int unsigned DDataWidth = top_pkg::TL_DW;
+  localparam int unsigned DFIFODepth = 1 << (Log2BurstLen - ABIT);
 
   logic idelayctrl_rdy_sync;
   logic clk_idelay;
 
   /* Tag memory interface */
-  logic                      tag_cmd_req, tag_cmd_wready;
+  logic                      tag_cmd_req;
   logic                      tag_rdata_rready;
 
   /* HBMC command interface */
-  logic                      cmd_wvalid, cmd_wready;
-  logic  [HyperRAMAddrW-1:1] cmd_mem_addr;
-  logic                [6:0] cmd_word_cnt;
-  logic                      cmd_wr_not_rd;
-  logic                      cmd_wrap_not_incr;
-  logic                [3:0] cmd_seq;
+  logic [NumPorts-1:0]                    cmd_req;
+  logic [NumPorts-1:0]                    cmd_wvalid;
+  logic [NumPorts-1:0]                    cmd_wready;
+  logic [NumPorts-1:0][HyperRAMAddrW-1:1] cmd_mem_addr;
+  logic [NumPorts-1:0][6:0]               cmd_word_cnt;
+  logic [NumPorts-1:0]                    cmd_wr_not_rd;
+  logic [NumPorts-1:0]                    cmd_wrap_not_incr;
+  logic [NumPorts-1:0][SeqWidth-1:0]      cmd_seq;
 
   /* Upstream FIFO wires */
   logic [15:0]               ufifo_wr_data;
   logic                      ufifo_wr_last;
   logic                      ufifo_wr_ena;
-  logic [HRFifoWidth-1:0]    ufifo_rd_dout;
+  logic [UDataWidth-1:0]     ufifo_rd_dout;
   logic [9:0]                ufifo_rd_free;
   logic                      ufifo_rd_last;
   logic                      ufifo_rd_ena;
@@ -130,8 +147,8 @@ module hbmc_tl_top import tlul_pkg::*; #(
   logic [15:0]               dfifo_rd_data;
   logic [1:0]                dfifo_rd_strb;
   logic                      dfifo_rd_ena;
-  logic [HRFifoWidth-1:0]    dfifo_wr_din;
-  logic [HRFifoWidth/8-1:0]  dfifo_wr_strb;
+  logic [DDataWidth-1:0]     dfifo_wr_din;
+  logic [DDataWidth/8-1:0]   dfifo_wr_strb;
   logic                      dfifo_wr_ena;
   logic                      dfifo_wr_full;
 
@@ -194,102 +211,216 @@ module hbmc_tl_top import tlul_pkg::*; #(
   endgenerate
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
-// TL-UL Access ports.
+  // FIFOs on the TL-UL ports break a combinatorial loop between the instruction fetch and LSU ports
+  // of the CPU since the HyperRAM is presented to both ports, but without adding latency to the
+  // request or response.
+  tlul_pkg::tl_h2d_t tl_i_int[NumPorts];
+  tlul_pkg::tl_d2h_t tl_o_int[NumPorts];
 
-logic [3:0] ufifo_rd_seq;
+  for (genvar p = 0; p < NumPorts; p++) begin : gen_tlul_fifos
+    tlul_fifo_sync #(
+      .ReqPass      (1'b1),  // Do not add latency.
+      .RspPass      (1'b1),
+      .ReqDepth     (1),  // No need for more than a single slot.
+      .RspDepth     (1)
+    ) u_tl_fifo(
+      .clk_i        (clk_i),
+      .rst_ni       (rst_ni),
+      .tl_h_i       (tl_i[p]),
+      .tl_h_o       (tl_o[p]),
+      .tl_d_o       (tl_i_int[p]),
+      .tl_d_i       (tl_o_int[p]),
+      .spare_req_i  ('0),
+      .spare_req_o  (),
+      .spare_rsp_i  ('0),
+      .spare_rsp_o  ()
+    );
+  end : gen_tlul_fifos
 
-logic tl_tag_bit;
-logic tag_cmd_wcap;
+/*----------------------------------------------------------------------------------------------------------------------------*/
+  // TL-UL Access ports.
 
-hbmc_tl_port #(
-  .HyperRAMAddrW      (HyperRAMAddrW)
-) u_ports[NPORTS-1:0](
-  .clk_i              (clk_i),
-  .rst_ni             (rst_ni),
+  logic [SeqWidth-1:0] ufifo_rd_seq;
 
-  // Port numbers.
-`ifdef HYPERRAM_DUAL_PORT
-  .portid_i           (2'b10),
-`else
-  .portid_i           (1'b0),
-`endif
+  logic [NumPorts-1:0] ufifo_all_rd_ena;
 
-  // TL-UL interface.
-  .tl_i               (tl_i),
-  .tl_o               (tl_o),
+  logic [NumPorts-1:0][DDataWidth-1:0]    dfifo_all_wr_din;
+  logic [NumPorts-1:0][DDataWidth/8-1:0]  dfifo_all_wr_strb;
+  logic [NumPorts-1:0]                    dfifo_all_wr_ena;
+  logic [NumPorts-1:0]                    dfifo_all_wr_full;
 
-  // Interface to write buffer.
-  // TODO: What write buffer?
-  //  .wrbuf_b
+  logic [NumPorts-1:0] tag_all_cmd_req;
+  logic [NumPorts-1:0][HyperRAMAddrW-1:1] tag_all_cmd_mem_addr;
+  logic [NumPorts-1:0] tag_all_cmd_wr_not_rd;
+  logic [NumPorts-1:0] tag_all_rdata_rready;
 
-  // Command data to the HyperRAM controller.
-  .cmd_wvalid         (cmd_wvalid),
-  .cmd_wready         (cmd_wready),
-  .cmd_mem_addr       (cmd_mem_addr),
-  .cmd_word_cnt       (cmd_word_cnt),
-  .cmd_wr_not_rd      (cmd_wr_not_rd),
-  .cmd_wrap_not_incr  (cmd_wrap_not_incr),
-  .cmd_seq            (cmd_seq),
-  .tag_cmd_req        (tag_cmd_req),
-  .tag_cmd_wready     (tag_cmd_wready),
-  .tag_cmd_wcap       (tag_cmd_wcap),
-  .dfifo_wr_ena       (dfifo_wr_ena),
-  .dfifo_wr_full      (dfifo_wr_full),
-  .dfifo_wr_strb      (dfifo_wr_strb),
-  .dfifo_wr_din       (dfifo_wr_din),
+  logic tl_tag_bit;
+  logic [NumPorts-1:0] tag_all_cmd_wcap;
 
-  // Read data from the HyperRAM controller.
-  // TODO: Probably want to change this interface once stable.
-  .ufifo_rd_ena       (ufifo_rd_ena),
-  .ufifo_rd_empty     (ufifo_rd_empty),
-  .ufifo_rd_dout      (ufifo_rd_dout),
-  .ufifo_rd_seq       (ufifo_rd_seq),
-  .ufifo_rd_last      (ufifo_rd_last),
+  // Write notifications.
+  logic [NumPorts-1:0] wr_notify_out;
+  logic [NumPorts-1:0] wr_notify_in;
+  logic [NumPorts-1:0][HyperRAMAddrW-1:ABIT] wr_notify_addr_out;
+  logic [NumPorts-1:0][HyperRAMAddrW-1:ABIT] wr_notify_addr_in;
 
-  // Tag read data interface.
-  .tag_rdata_rready   (tag_rdata_rready),
-  .tl_tag_bit         (tl_tag_bit)
-);
+  if (NumPorts > 1) begin : gen_wr_notify
+    // Instruction port requires notifications of writes occurring on the Data port.
+    assign wr_notify_in[PortI]      = wr_notify_out[PortD];
+    assign wr_notify_addr_in[PortI] = wr_notify_addr_out[PortD];
+    // Writes shall not occur on the Instruction port.
+    assign {wr_notify_in[PortD], wr_notify_addr_in[PortD]} = '0;
+  end else begin : gen_no_wr_notify
+    assign wr_notify_in = '0;
+    assign wr_notify_addr_in = '0;
+  end
+
+  for (genvar p = 0; p < NumPorts; p++) begin : gen_ports
+    hbmc_tl_port #(
+      .HyperRAMAddrW  (HyperRAMAddrW),
+      .Log2BurstLen   (Log2BurstLen),
+      .PortIDWidth    (PortIDWidth),
+      .SeqWidth       (SeqWidth),
+      .SupportWrites  (p == PortD)  // Only the data port supports writing.
+    ) u_ports(
+      .clk_i              (clk_i),
+      .rst_ni             (rst_ni),
+
+      // Port numbers.
+      .portid_i           (PortIDWidth'(p)),
+
+      // TL-UL interface.
+      .tl_i               (tl_i_int[p]),
+      .tl_o               (tl_o_int[p]),
+
+      // Write notification input.
+      .wr_notify_i        (wr_notify_in[p]),
+      .wr_notify_addr_i   (wr_notify_addr_in[p]),
+
+      // Write notification output.
+      .wr_notify_o        (wr_notify_out[p]),
+      .wr_notify_addr_o   (wr_notify_addr_out[p]),
+
+      // Interface to write buffer.
+      // TODO: What write buffer?
+      //  .wrbuf_b
+
+      // Command data to the HyperRAM controller.
+      .cmd_req            (cmd_req[p]),
+      .cmd_wvalid         (cmd_wvalid[p]),
+      .cmd_wready         (cmd_wready[p]),
+      .cmd_mem_addr       (cmd_mem_addr[p]),
+      .cmd_word_cnt       (cmd_word_cnt[p]),
+      .cmd_wr_not_rd      (cmd_wr_not_rd[p]),
+      .cmd_wrap_not_incr  (cmd_wrap_not_incr[p]),
+      .cmd_seq            (cmd_seq[p]),
+      .tag_cmd_req        (tag_all_cmd_req[p]),
+      .tag_cmd_mem_addr   (tag_all_cmd_mem_addr[p]),
+      .tag_cmd_wr_not_rd  (tag_all_cmd_wr_not_rd[p]),
+      .tag_cmd_wcap       (tag_all_cmd_wcap[p]),
+      .dfifo_wr_ena       (dfifo_all_wr_ena[p]),
+      .dfifo_wr_full      (dfifo_all_wr_full[p]),
+      .dfifo_wr_strb      (dfifo_all_wr_strb[p]),
+      .dfifo_wr_din       (dfifo_all_wr_din[p]),
+
+      // Read data from the HyperRAM controller.
+      .ufifo_rd_ena       (ufifo_all_rd_ena[p]),
+      .ufifo_rd_empty     (ufifo_rd_empty),
+      .ufifo_rd_dout      (ufifo_rd_dout),
+      .ufifo_rd_seq       (ufifo_rd_seq),
+      .ufifo_rd_last      (ufifo_rd_last),
+
+      // Tag read data interface.
+      .tag_rdata_rready   (tag_all_rdata_rready[p]),
+      .tl_tag_bit         (tl_tag_bit)
+    );
+  end : gen_ports
+
+  // Upstream FIFO traffic is presented to all ports, but only the one indicated by the sequence
+  // number within the FIFO entry shall consume it.
+  assign ufifo_rd_ena = |ufifo_all_rd_ena;
+
+  // Downstream FIFO traffic comes from the Data port, since this is the only port that performs
+  // writes; with write buffering it would instead come from the write buffer.
+  assign dfifo_wr_ena  = dfifo_all_wr_ena[PortD];
+  assign dfifo_wr_strb = dfifo_all_wr_strb[PortD];
+  assign dfifo_wr_din  = dfifo_all_wr_din[PortD];
+  assign dfifo_all_wr_full = {NumPorts{dfifo_wr_full}};
+
+  // Only the Data port requires tag bits.
+  assign tag_cmd_req      = tag_all_cmd_req[PortD];
+  assign tag_rdata_rready = tag_all_rdata_rready[PortD];
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 // TODO: Write buffer coalesces word writes to form a burst write.
 `ifdef HYPERRAM_WRITE_BUFFERING
-hyperram_wrbuf #(
+  hyperram_wrbuf #(
 
-) u_wrbuf(
+  ) u_wrbuf(
 
 
-);
+  );
 `endif
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
-// TODO: Arbitrate amongst the access ports; presently there is just a single port.
+  // Arbitrate amongst the access ports.
+  localparam  BUS_SYNC_WIDTH = 19 + 7 + 1 + 1 + SeqWidth;
+
+  logic cmd_fifo_wvalid;
+  logic cmd_fifo_wready;
+  logic [BUS_SYNC_WIDTH-1:0] cmd_fifo_wdata;
+
+  if (NumPorts > 1) begin : gen_multi_port
+    logic [BUS_SYNC_WIDTH-1:0] cmd_wdata[NumPorts];
+    always_comb begin
+      for (int unsigned p = 0; p < NumPorts; p++) begin
+        cmd_wdata[p] = {cmd_mem_addr[p], cmd_word_cnt[p], cmd_wr_not_rd[p], cmd_wrap_not_incr[p], cmd_seq[p]};
+      end
+    end
+
+    prim_arbiter_fixed #(
+      .N    (NumPorts),
+      .DW   (BUS_SYNC_WIDTH)
+    ) u_cmd_arbiter(
+      .clk_i   (clk_i),
+      .rst_ni  (rst_ni),
+
+      .req_i   (cmd_req),
+      .data_i  (cmd_wdata),
+      .gnt_o   (cmd_wready),
+      .idx_o   (),  // Not used.
+
+      .valid_o (cmd_fifo_wvalid),
+      .data_o  (cmd_fifo_wdata),
+      .ready_i (cmd_fifo_wready)
+    );
+  end else begin : gen_single_port
+    assign cmd_fifo_wvalid = cmd_wvalid;
+    assign cmd_wready = cmd_fifo_wready;
+    assign cmd_fifo_wdata = {cmd_mem_addr, cmd_word_cnt, cmd_wr_not_rd, cmd_wrap_not_incr, cmd_seq};
+  end
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
-
-  localparam  BUS_SYNC_WIDTH = 19 + 7 + 1 + 1 + 4;
 
   logic                     cmd_rvalid, cmd_rready;
   logic [HyperRAMAddrW-1:1] cmd_mem_addr_dst;
   logic               [6:0] cmd_word_cnt_dst;
   logic                     cmd_wr_not_rd_dst;
   logic                     cmd_wrap_not_incr_dst;
-  logic               [3:0] cmd_seq_dst;
+  logic      [SeqWidth-1:0] cmd_seq_dst;
 
-  logic [BUS_SYNC_WIDTH-1:0] cmd_wdata, cmd_rdata;
+  logic [BUS_SYNC_WIDTH-1:0] cmd_rdata;
 
-  assign cmd_wdata = {cmd_mem_addr, cmd_word_cnt, cmd_wr_not_rd, cmd_wrap_not_incr, cmd_seq};
   assign {cmd_mem_addr_dst, cmd_word_cnt_dst, cmd_wr_not_rd_dst, cmd_wrap_not_incr_dst, cmd_seq_dst} = cmd_rdata;
 
   prim_fifo_async #(
     .Width(BUS_SYNC_WIDTH),
-    .Depth(2)
+    .Depth(4)
   ) u_hbmc_cmd_fifo (
     .clk_wr_i (clk_i),
     .rst_wr_ni(rst_ni),
-    .wvalid_i (cmd_wvalid),
-    .wready_o (cmd_wready),
-    .wdata_i  (cmd_wdata),
+    .wvalid_i (cmd_fifo_wvalid),
+    .wready_o (cmd_fifo_wready),
+    .wdata_i  (cmd_fifo_wdata),
     .wdepth_o (),
 
     .clk_rd_i (clk_hbmc_0),
@@ -375,7 +506,7 @@ hyperram_wrbuf #(
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
   /* Return the sequence number from the command so that the data may be steered appropriately */
-  logic [3:0] ufifo_wr_seq;
+  logic [SeqWidth-1:0] ufifo_wr_seq;
   always_ff @(posedge clk_hbmc_0) begin
     if (cmd_rvalid & cmd_rready) ufifo_wr_seq <= cmd_seq_dst;
   end
@@ -383,7 +514,9 @@ hyperram_wrbuf #(
   /* Upstream data FIFO */
   hbmc_ufifo #
   (
-      .DATA_WIDTH ( HRFifoWidth )
+      .DataWidth ( UDataWidth ),
+      .FIFODepth ( UFIFODepth ),
+      .SeqWidth  ( SeqWidth   )
   )
   hbmc_ufifo_inst
   (
@@ -409,7 +542,8 @@ hyperram_wrbuf #(
   /* Downstream data FIFO */
   hbmc_dfifo #
   (
-      .DATA_WIDTH ( HRFifoWidth )
+      .DataWidth ( DDataWidth ),
+      .FIFODepth ( DFIFODepth )
   )
   hbmc_dfifo_inst
   (
@@ -445,49 +579,22 @@ hyperram_wrbuf #(
     logic                  wdata;
   } tag_cmd_t;
 
-  tag_cmd_t tag_cmd_in, tag_cmd_out;
-  logic tag_cmd_valid;
-
   logic tag_rdata;
   logic tag_rdata_valid_q, tag_rdata_valid_d;
   logic tag_rdata_fifo_rvalid;
 
-  assign tag_cmd_in.addr  = cmd_mem_addr[TAG_ADDR_W + 1:2];
-  assign tag_cmd_in.write = cmd_wr_not_rd;
-  assign tag_cmd_in.wdata = tag_cmd_wcap;
-
-  // TODO: Justify the existence of this FIFO, or remove it.
-  /*prim_fifo_sync #(
-    .Width($bits(tag_cmd_t)),
-    .Depth(TAG_FIFO_DEPTH),
-    .Pass(1'b0)
-  ) u_tag_cmd_fifo (
-    .clk_i    (clk_i),
-    .rst_ni   (rst_ni),
-    .clr_i    (1'b0),
-    .wvalid_i (tag_cmd_req),
-    .wready_o (tag_cmd_wready),
-    .wdata_i  (tag_cmd_in),
-    .rvalid_o (tag_cmd_valid),
-    .rready_i (1'b1),
-    .rdata_o  (tag_cmd_out),
-
-    .full_o  (),
-    .depth_o (),
-    .err_o   ()
-  );*/
-  assign tag_cmd_valid = tag_cmd_req;
-  assign tag_cmd_wready = 1'b1;
-  assign tag_cmd_out = tag_cmd_in;
+  // Only the Data port requires capability tags.
+  tag_cmd_t tag_cmd;
+  assign tag_cmd.addr  = tag_all_cmd_mem_addr[PortD][TAG_ADDR_W + 1:2];
+  assign tag_cmd.write = tag_all_cmd_wr_not_rd[PortD];
+  assign tag_cmd.wdata = tag_all_cmd_wcap[PortD];
 
   prim_fifo_sync #(
     .Width(1),
     .Depth(TAG_FIFO_DEPTH),
-//    .Pass(1'b0)
-
-// TODO: This is required when collecting read data from the buffer, but this may not be a complete
-// and/or correct solution? More thought required here.
-.Pass(1'b1)
+    // Pass through is required when a Read operation hits in the internal buffer, since that
+    // takes only a single cycle.
+    .Pass(1'b1)
   ) u_tag_rdata_fifo (
     .clk_i    (clk_i),
     .rst_ni   (rst_ni),
@@ -505,11 +612,11 @@ hyperram_wrbuf #(
   );
 
   // TODO: Probably wants some refinement/augmentation.
-  `ASSERT(always_tag_rdata_valid_when_read_data_response, ufifo_rd_ena |-> tag_rdata_fifo_rvalid)
+  // `ASSERT(always_tag_rdata_valid_when_read_data_response, ufifo_rd_ena |-> tag_rdata_fifo_rvalid)
 
-  assign tag_rdata_valid_d = tag_cmd_valid & ~tag_cmd_out.write;
+  assign tag_rdata_valid_d = tag_cmd_req & ~tag_cmd.write;
 
-  always @(posedge clk_i, negedge rst_ni) begin
+  always_ff @(posedge clk_i, negedge rst_ni) begin
     if (~rst_ni) begin
       tag_rdata_valid_q <= 1'b0;
     end else begin
@@ -522,10 +629,10 @@ hyperram_wrbuf #(
     .Depth(2 ** TAG_ADDR_W)
   ) u_tag_ram (
     .clk_i   (clk_i),
-    .req_i   (tag_cmd_valid),
-    .write_i (tag_cmd_out.write),
-    .addr_i  (tag_cmd_out.addr),
-    .wdata_i (tag_cmd_out.wdata),
+    .req_i   (tag_cmd_req),
+    .write_i (tag_cmd.write),
+    .addr_i  (tag_cmd.addr),
+    .wdata_i (tag_cmd.wdata),
     .wmask_i ('1),
     .rdata_o (tag_rdata),
     .cfg_i   ('0)
