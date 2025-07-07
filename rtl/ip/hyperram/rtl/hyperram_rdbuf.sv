@@ -9,6 +9,7 @@ module hyperram_rdbuf #(
   // System bus side.
   parameter int unsigned AW = 20, // Width of address, bits.
   parameter int unsigned DW = 32, // Width of data, bits.
+  parameter int unsigned DBW = 4,  // Number of update strobes.
   parameter int unsigned PortIDWidth = 1, // Width of Port ID, bits.
   parameter int unsigned SeqWidth = 4, // Width of sequence number, bits.
   // Burst size of 16 bytes
@@ -35,10 +36,17 @@ module hyperram_rdbuf #(
   output    [SeqWidth-1:0] seq_o,
 
   // Write notification test.
-  input        [AW-1:BBIT] wr_notify_addr_i,
+  input        [AW-1:ABIT] wr_notify_addr_i,
   output                   wr_matches_o,
+  output                   wr_valid_o,
 
-  // Reading from the buffer.
+  // Updating the buffer (System bus side).
+  input                    update_i,
+  input      [BBIT-1:ABIT] uoffset_i,
+  input          [DBW-1:0] umask_i,
+  input           [DW-1:0] udata_i,
+
+  // Reading from the buffer (System bus side).
   input                    read_i,
   input      [BBIT-1:ABIT] roffset_i,
   output logic    [DW-1:0] rdata_o,
@@ -74,7 +82,10 @@ assign valid_o = valid[aoffset];
 
 // Write notification test; this is done in parallel with normal read buffer access because
 // normally writes on other TL-UL ports will not collide with buffered read data.
+logic [BBIT-1:ABIT] wn_offset;
+assign wn_offset = wr_notify_addr_i[BBIT-1:ABIT];  // Address bits selecting word within burst.
 assign wr_matches_o = &{configured, wr_notify_addr_i[AW-1:BBIT] == base_addr[AW-1:BBIT]};
+assign wr_valid_o = valid[wn_offset];
 
 // Sequence number for the buffer contents.
 logic [2:0] next_seq;
@@ -121,22 +132,32 @@ always_ff @(posedge clk_i) begin
   end
 end
 
+// RAM submodule wants a single write strobe per data line.
+localparam int unsigned DataBitsPerMask = DW / DBW;
+logic [DW-1:0] umask_full;
+always_comb begin
+  for (int unsigned b = 0; b < DBW; b++) begin
+    umask_full[b*DataBitsPerMask +: DataBitsPerMask] = {DataBitsPerMask{umask_i[b]}};
+  end
+end
+
 // Use a dual-port implementation for simplicity because the design is targeting an FPGA
 // implementation. Read-write collisions will be infrequent but we DO need to handle them.
 prim_ram_2p #(
   .Width            (DW),
   .Depth            (BufWords),
-  .DataBitsPerMask  (DW)  // TODO: We do not require partial writes presently; this may change.
+  .DataBitsPerMask  (DataBitsPerMask)
 ) u_buf(
   .clk_a_i      (clk_i),
   .clk_b_i      (clk_i),
 
   // Read port (TL-UL side).
-  .a_req_i      (read_i),
-  .a_write_i    (1'b0),
-  .a_addr_i     (roffset_i),
-  .a_wdata_i    ('0),  // Read-only port.
-  .a_wmask_i    ('0),
+  // - update and read shall not occur simultaneously; update takes precedence.
+  .a_req_i      (read_i | update_i),
+  .a_write_i    (update_i),
+  .a_addr_i     (update_i ? uoffset_i : roffset_i),
+  .a_wdata_i    (udata_i),
+  .a_wmask_i    (umask_full),
   .a_rdata_o    (rdata_o),
 
   // Write port (HyperRAM side).

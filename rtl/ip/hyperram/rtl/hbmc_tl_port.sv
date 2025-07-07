@@ -1,4 +1,3 @@
-// Copyright lowRISC contributors.
 // Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -13,10 +12,12 @@ module hbmc_tl_port import tlul_pkg::*; #(
   parameter int unsigned Log2BurstLen = 5,  // 32-byte bursts.
   parameter int unsigned PortIDWidth = 1,
   parameter int unsigned SeqWidth = 4,
-  // Does this port need to support write operations?
+  // Does this port need to support TileLink write operations?
   parameter bit SupportWrites = 1,
 
-  localparam int unsigned ABIT = $clog2(top_pkg::TL_DW / 8)
+  // Derived address bit parameters.
+  localparam int unsigned ABIT = $clog2(top_pkg::TL_DW / 8),
+  localparam int unsigned BBIT = Log2BurstLen
 ) (
   input                               clk_i,
   input                               rst_ni,
@@ -31,9 +32,13 @@ module hbmc_tl_port import tlul_pkg::*; #(
   // Write notification input.
   input                               wr_notify_i,
   input        [HyperRAMAddrW-1:ABIT] wr_notify_addr_i,
-  
+  input         [top_pkg::TL_DBW-1:0] wr_notify_mask_i,
+  input          [top_pkg::TL_DW-1:0] wr_notify_data_i,
+
   // Write notification output.
   output logic                        wr_notify_o,
+  output logic  [top_pkg::TL_DBW-1:0] wr_notify_mask_o,
+  output logic   [top_pkg::TL_DW-1:0] wr_notify_data_o,
   output logic [HyperRAMAddrW-1:ABIT] wr_notify_addr_o,
 
   // Interface to the write buffer
@@ -74,6 +79,9 @@ module hbmc_tl_port import tlul_pkg::*; #(
   output                              tag_rdata_rready,
   input                               tl_tag_bit
 );
+
+// TODO: Do we support in-situ updating?
+`define UPDATING
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
@@ -118,11 +126,18 @@ module hbmc_tl_port import tlul_pkg::*; #(
         wr_notify_o      <= wr_req & tl_a_ready;
         // Address to which the write was performed.
         wr_notify_addr_o <= tl_i.a_address[HyperRAMAddrW-1:ABIT];
+        // Mask specifying the sub-words being written.
+        wr_notify_mask_o <= tl_i.a_mask;
+        // Data being written.
+        wr_notify_data_o <= tl_i.a_data;
       end
     end
   end else begin
+    // TODO: Generate a TL-UL error response in this case if `wr_req` is asserted.
     assign wr_notify_o      = 1'b0;
     assign wr_notify_addr_o = '0;
+    assign wr_notify_mask_o = '0;
+    assign wr_notify_data_o = '0;
   end
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
@@ -138,13 +153,28 @@ module hbmc_tl_port import tlul_pkg::*; #(
   // Write notifications have the highest priority and must immediately
   // invalidate the contents of the read buffer in the event of a collision. `wr_notify_i` is
   // asserted for a single cycle.
+`ifdef UPDATING
+  logic wr_notify_valid;
+  wire wr_notify_update = &{wr_notify_i, wr_notify_match, wr_notify_valid};
+  wire rdbuf_update = wr_notify_update | &{SupportWrites, wr_req, rdbuf_matches, rdbuf_valid};
+  wire rdbuf_invalidate = &{wr_notify_i, wr_notify_match, ~wr_notify_valid} |
+                          &{SupportWrites, wr_req, rdbuf_matches, ~rdbuf_valid};
+
+  // Properties of buffer update;
+  // write notifications take precedence because they cannot be delayed.
+  logic [top_pkg::TL_DBW-1:0] umask;
+  logic [top_pkg::TL_DW-1:0] udata;
+  logic [BBIT-1:ABIT] uoffset;
+  assign uoffset = wr_notify_update ? wr_notify_addr_i[BBIT-1:ABIT] : tl_i.a_address[BBIT-1:ABIT];
+  assign umask   = wr_notify_update ? wr_notify_mask_i : tl_i.a_mask;
+  assign udata   = wr_notify_update ? wr_notify_data_i : tl_i.a_data;
+`else
   wire rdbuf_invalidate = (wr_notify_i & wr_notify_match) | (wr_req & rdbuf_matches);
+`endif
   // Issue a new burst read if a read is performed outside of the current buffered address range.
   wire rdbuf_set   = rd_req & ~rdbuf_matches & issue;
   assign rdbuf_hit = rd_req &  rdbuf_matches;
   assign rdbuf_re  = &{rd_req, rdbuf_matches, rdbuf_valid};  // Read data available.
-
-  localparam int unsigned BBIT = Log2BurstLen;
 
   // Read buffer retains up to a single burst of data read from the HyperRAM for this port;
   // the data arrives incrementally and may be returned as soon as it becomes available.
@@ -170,8 +200,15 @@ module hbmc_tl_port import tlul_pkg::*; #(
     .seq_o            (rdbuf_seq),
 
     // Write notification test.
-    .wr_notify_addr_i (wr_notify_addr_i[HyperRAMAddrW-1:BBIT]),
+    .wr_notify_addr_i (wr_notify_addr_i[HyperRAMAddrW-1:ABIT]),
     .wr_matches_o     (wr_notify_match),
+    .wr_valid_o       (wr_notify_valid),
+
+    // Updating the buffer.
+    .update_i         (rdbuf_update),
+    .uoffset_i        (uoffset),
+    .umask_i          (umask),
+    .udata_i          (udata),
 
     // Reading from buffer.
     .read_i           (rdbuf_re),
@@ -373,7 +410,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
 
   // Unused signals.
   logic unused;
-  assign unused = ^{tl_i.d_ready, tl_i.a_param, wr_notify_addr_i};
+  assign unused = ^{tl_i.d_ready, tl_i.a_param};
 
 endmodule
 
