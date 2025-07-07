@@ -262,16 +262,24 @@ module hbmc_tl_top import tlul_pkg::*; #(
   logic [NumPorts-1:0] wr_notify_in;
   logic [NumPorts-1:0][HyperRAMAddrW-1:ABIT] wr_notify_addr_out;
   logic [NumPorts-1:0][HyperRAMAddrW-1:ABIT] wr_notify_addr_in;
+  logic [NumPorts-1:0][top_pkg::TL_DBW-1:0] wr_notify_mask_out;
+  logic [NumPorts-1:0][top_pkg::TL_DBW-1:0] wr_notify_mask_in;
+  logic [NumPorts-1:0][top_pkg::TL_DW-1:0] wr_notify_data_out;
+  logic [NumPorts-1:0][top_pkg::TL_DW-1:0] wr_notify_data_in;
 
   if (NumPorts > 1) begin : gen_wr_notify
     // Instruction port requires notifications of writes occurring on the Data port.
     assign wr_notify_in[PortI]      = wr_notify_out[PortD];
     assign wr_notify_addr_in[PortI] = wr_notify_addr_out[PortD];
+    assign wr_notify_mask_in[PortI] = wr_notify_mask_out[PortD];
+    assign wr_notify_data_in[PortI] = wr_notify_data_out[PortD];
     // Writes shall not occur on the Instruction port.
     assign {wr_notify_in[PortD], wr_notify_addr_in[PortD]} = '0;
   end else begin : gen_no_wr_notify
     assign wr_notify_in = '0;
     assign wr_notify_addr_in = '0;
+    assign wr_notify_mask_in = '0;
+    assign wr_notify_data_in = '0;
   end
 
   for (genvar p = 0; p < NumPorts; p++) begin : gen_ports
@@ -295,10 +303,14 @@ module hbmc_tl_top import tlul_pkg::*; #(
       // Write notification input.
       .wr_notify_i        (wr_notify_in[p]),
       .wr_notify_addr_i   (wr_notify_addr_in[p]),
+      .wr_notify_mask_i   (wr_notify_mask_in[p]),
+      .wr_notify_data_i   (wr_notify_data_in[p]),
 
       // Write notification output.
       .wr_notify_o        (wr_notify_out[p]),
       .wr_notify_addr_o   (wr_notify_addr_out[p]),
+      .wr_notify_mask_o   (wr_notify_mask_out[p]),
+      .wr_notify_data_o   (wr_notify_data_out[p]),
 
       // Interface to write buffer.
       // TODO: What write buffer?
