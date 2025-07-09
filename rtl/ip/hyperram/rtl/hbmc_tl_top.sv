@@ -94,9 +94,14 @@ module hbmc_tl_top import tlul_pkg::*; #(
   localparam int unsigned SeqWidth = PortIDWidth + 3;
 
   localparam int unsigned HyperRAMAddrW = $clog2(HyperRAMSize);
+  // LSB of word address.
   localparam int unsigned ABIT = $clog2(top_pkg::TL_DW / 8);
   // Use 32-byte bursts for performance, whilst reducing the penalty of wasted burst reads.
   localparam int unsigned Log2BurstLen = 5;
+  // Try with 16-byte bursts.
+  // localparam int unsigned Log2BurstLen = 4;
+  // Try with 64-byte bursts.
+  // localparam int unsigned Log2BurstLen = 6;
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
@@ -123,14 +128,13 @@ module hbmc_tl_top import tlul_pkg::*; #(
   logic                      tag_rdata_rready;
 
   /* HBMC command interface */
-  logic [NumPorts-1:0]                    cmd_req;
-  logic [NumPorts-1:0]                    cmd_wvalid;
-  logic [NumPorts-1:0]                    cmd_wready;
-  logic [NumPorts-1:0][HyperRAMAddrW-1:1] cmd_mem_addr;
-  logic [NumPorts-1:0][6:0]               cmd_word_cnt;
-  logic [NumPorts-1:0]                    cmd_wr_not_rd;
-  logic [NumPorts-1:0]                    cmd_wrap_not_incr;
-  logic [NumPorts-1:0][SeqWidth-1:0]      cmd_seq;
+  logic [NumPorts-1:0]                       cmd_req;
+  logic [NumPorts-1:0]                       cmd_wready;
+  logic [NumPorts-1:0][HyperRAMAddrW-1:ABIT] cmd_mem_addr;
+  logic [NumPorts-1:0][Log2BurstLen-ABIT:0]  cmd_word_cnt;  // Bus words.
+  logic [NumPorts-1:0]                       cmd_wr_not_rd;
+  logic [NumPorts-1:0]                       cmd_wrap_not_incr;
+  logic [NumPorts-1:0][SeqWidth-1:0]         cmd_seq;
 
   /* Upstream FIFO wires */
   logic [15:0]               ufifo_wr_data;
@@ -250,7 +254,7 @@ module hbmc_tl_top import tlul_pkg::*; #(
   logic [NumPorts-1:0]                    dfifo_all_wr_full;
 
   logic [NumPorts-1:0] tag_all_cmd_req;
-  logic [NumPorts-1:0][HyperRAMAddrW-1:1] tag_all_cmd_mem_addr;
+  logic [NumPorts-1:0][HyperRAMAddrW-1:ABIT] tag_all_cmd_mem_addr;
   logic [NumPorts-1:0] tag_all_cmd_wr_not_rd;
   logic [NumPorts-1:0] tag_all_rdata_rready;
 
@@ -289,7 +293,7 @@ module hbmc_tl_top import tlul_pkg::*; #(
       .PortIDWidth    (PortIDWidth),
       .SeqWidth       (SeqWidth),
       .SupportWrites  (p == PortD)  // Only the data port supports writing.
-    ) u_ports(
+    ) u_port(
       .clk_i              (clk_i),
       .rst_ni             (rst_ni),
 
@@ -312,27 +316,22 @@ module hbmc_tl_top import tlul_pkg::*; #(
       .wr_notify_mask_o   (wr_notify_mask_out[p]),
       .wr_notify_data_o   (wr_notify_data_out[p]),
 
-      // Interface to write buffer.
-      // TODO: What write buffer?
-      //  .wrbuf_b
-
       // Command data to the HyperRAM controller.
-      .cmd_req            (cmd_req[p]),
-      .cmd_wvalid         (cmd_wvalid[p]),
-      .cmd_wready         (cmd_wready[p]),
-      .cmd_mem_addr       (cmd_mem_addr[p]),
-      .cmd_word_cnt       (cmd_word_cnt[p]),
-      .cmd_wr_not_rd      (cmd_wr_not_rd[p]),
-      .cmd_wrap_not_incr  (cmd_wrap_not_incr[p]),
-      .cmd_seq            (cmd_seq[p]),
+      .cmd_req_o          (cmd_req[p]),
+      .cmd_wready_i       (cmd_wready[p]),
+      .cmd_mem_addr_o     (cmd_mem_addr[p]),
+      .cmd_word_cnt_o     (cmd_word_cnt[p]),
+      .cmd_wr_not_rd_o    (cmd_wr_not_rd[p]),
+      .cmd_wrap_not_incr_o(cmd_wrap_not_incr[p]),
+      .cmd_seq_o          (cmd_seq[p]),
       .tag_cmd_req        (tag_all_cmd_req[p]),
       .tag_cmd_mem_addr   (tag_all_cmd_mem_addr[p]),
       .tag_cmd_wr_not_rd  (tag_all_cmd_wr_not_rd[p]),
       .tag_cmd_wcap       (tag_all_cmd_wcap[p]),
-      .dfifo_wr_ena       (dfifo_all_wr_ena[p]),
-      .dfifo_wr_full      (dfifo_all_wr_full[p]),
-      .dfifo_wr_strb      (dfifo_all_wr_strb[p]),
-      .dfifo_wr_din       (dfifo_all_wr_din[p]),
+      .dfifo_wr_ena_o     (dfifo_all_wr_ena[p]),
+      .dfifo_wr_full_i    (dfifo_all_wr_full[p]),
+      .dfifo_wr_strb_o    (dfifo_all_wr_strb[p]),
+      .dfifo_wr_din_o     (dfifo_all_wr_din[p]),
 
       // Read data from the HyperRAM controller.
       .ufifo_rd_ena       (ufifo_all_rd_ena[p]),
@@ -352,7 +351,7 @@ module hbmc_tl_top import tlul_pkg::*; #(
   assign ufifo_rd_ena = |ufifo_all_rd_ena;
 
   // Downstream FIFO traffic comes from the Data port, since this is the only port that performs
-  // writes; with write buffering it would instead come from the write buffer.
+  // writes.
   assign dfifo_wr_ena  = dfifo_all_wr_ena[PortD];
   assign dfifo_wr_strb = dfifo_all_wr_strb[PortD];
   assign dfifo_wr_din  = dfifo_all_wr_din[PortD];
@@ -363,20 +362,10 @@ module hbmc_tl_top import tlul_pkg::*; #(
   assign tag_rdata_rready = tag_all_rdata_rready[PortD];
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
-// TODO: Write buffer coalesces word writes to form a burst write.
-`ifdef HYPERRAM_WRITE_BUFFERING
-  hyperram_wrbuf #(
-
-  ) u_wrbuf(
-
-
-  );
-`endif
-
-/*----------------------------------------------------------------------------------------------------------------------------*/
   // Arbitrate amongst the access ports.
-  localparam  BUS_SYNC_WIDTH = 19 + 7 + 1 + 1 + SeqWidth;
-
+  localparam  BUS_SYNC_WIDTH = (HyperRAMAddrW - ABIT)     // Address, in terms of TL-UL bus words.
+                             + (Log2BurstLen + 1 - ABIT)  // Number of TL-UL bus words.
+                             + 1 + 1 + SeqWidth;          // Write/Read, Wrap/linear, Sequence no.
   logic cmd_fifo_wvalid;
   logic cmd_fifo_wready;
   logic [BUS_SYNC_WIDTH-1:0] cmd_fifo_wdata;
@@ -406,21 +395,21 @@ module hbmc_tl_top import tlul_pkg::*; #(
       .ready_i (cmd_fifo_wready)
     );
   end else begin : gen_single_port
-    assign cmd_fifo_wvalid = cmd_wvalid;
+    assign cmd_fifo_wvalid = cmd_req & cmd_fifo_wready;
     assign cmd_wready = cmd_fifo_wready;
     assign cmd_fifo_wdata = {cmd_mem_addr, cmd_word_cnt, cmd_wr_not_rd, cmd_wrap_not_incr, cmd_seq};
   end
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
-  logic                     cmd_rvalid, cmd_rready;
-  logic [HyperRAMAddrW-1:1] cmd_mem_addr_dst;
-  logic               [6:0] cmd_word_cnt_dst;
-  logic                     cmd_wr_not_rd_dst;
-  logic                     cmd_wrap_not_incr_dst;
-  logic      [SeqWidth-1:0] cmd_seq_dst;
+  logic                        cmd_rvalid, cmd_rready;
+  logic [HyperRAMAddrW-1:ABIT] cmd_mem_addr_dst;
+  logic    [Log2BurstLen:ABIT] cmd_word_cnt_dst;
+  logic                        cmd_wr_not_rd_dst;
+  logic                        cmd_wrap_not_incr_dst;
+  logic         [SeqWidth-1:0] cmd_seq_dst;
 
-  logic [BUS_SYNC_WIDTH-1:0] cmd_rdata;
+  logic   [BUS_SYNC_WIDTH-1:0] cmd_rdata;
 
   assign {cmd_mem_addr_dst, cmd_word_cnt_dst, cmd_wr_not_rd_dst, cmd_wrap_not_incr_dst, cmd_seq_dst} = cmd_rdata;
 
@@ -445,11 +434,11 @@ module hbmc_tl_top import tlul_pkg::*; #(
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
-  // Widened address and word count.
+  // Widened address and word count, converting from TL-UL bus words to 16-bit HyperRAM words.
   logic [31:0] cmd_mem_addr_full;
   logic [15:0] cmd_word_cnt_full;
-  assign cmd_mem_addr_full = 32'(cmd_mem_addr_dst);
-  assign cmd_word_cnt_full = 16'(cmd_word_cnt_dst);
+  assign cmd_mem_addr_full = 32'({cmd_mem_addr_dst, {(ABIT-1){1'b0}}});
+  assign cmd_word_cnt_full = 16'({cmd_word_cnt_dst, {(ABIT-1){1'b0}}});
 
   hbmc_ctrl #
   (
@@ -597,7 +586,7 @@ module hbmc_tl_top import tlul_pkg::*; #(
 
   // Only the Data port requires capability tags.
   tag_cmd_t tag_cmd;
-  assign tag_cmd.addr  = tag_all_cmd_mem_addr[PortD][TAG_ADDR_W + 1:2];
+  assign tag_cmd.addr  = tag_all_cmd_mem_addr[PortD][HyperRAMAddrW-1:ABIT+1];
   assign tag_cmd.write = tag_all_cmd_wr_not_rd[PortD];
   assign tag_cmd.wdata = tag_all_cmd_wcap[PortD];
 

@@ -4,7 +4,6 @@
 
 // Read buffer retains the contents of a read burst, on the premise that subsequent words within
 // the burst will be required by the CPU in the near future.
-
 module hyperram_rdbuf #(
   // System bus side.
   parameter int unsigned AW = 20, // Width of address, bits.

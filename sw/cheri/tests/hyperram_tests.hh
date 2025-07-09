@@ -218,6 +218,10 @@ void write_prog(Capability<volatile uint32_t> hyperram_area, uint32_t addr) {
   hyperram_area[addr + 4] = 0x8082;
 
   asm volatile("fence.i" : : : "memory");
+
+  // Read back from the memory to ensure that the burst write completes.
+  // TODO: Decide whether we want to live with this solution.
+  volatile uint32_t rd_data = hyperram_area[addr];
 }
 
 /*
@@ -255,6 +259,65 @@ int execute_test(Capability<volatile uint32_t> hyperram_area, ds::xoroshiro::P64
     }
   }
 
+  return failures;
+}
+
+/*
+ * Perform partial writes to addresses that collide with the read buffer
+ * to check that read and write accesses are coherent.
+ */
+int buffering_test(Capability<volatile uint32_t> hyperram_area, ds::xoroshiro::P64R32 &prng, int iterations) {
+  const uint32_t burst_len = 32u;
+  int failures = 0;
+
+#if 0
+  // TODO: The selection of random numbers here is going to reduce the probability of provoking
+  // races in the hardware.
+
+  for (int i = 0; i < iterations; ++i) {
+    uint32_t burst_addr = prng() % (HYPERRAM_TEST_SIZE - burst_len);
+    // Align to the start of a burst.
+    burst_addr &= ~(burst_len - 1u);
+
+    if (prng() & 1) {
+      // With 50% probability, ensure that the buffer crosses a burst boundary.
+      burst_addr = burst_len / 2;
+    }
+
+    // Initialise the data at the target address.
+    uint32_t exp_data[burst_len / 4];
+    for (unsigned idx = 0u; idx < burst_len / 4; ++idx) {
+      exp_data[idx] = prng();
+      hyperram_area[burst_addr / 4] = exp_data[idx];
+    }
+
+    // Ensure that we have read data from an address.
+    volatile uint32_t rd_data = hyperram_area[burst_addr / 4];
+    failures += (rd_data != exp_data[0]);
+
+    for (unsigned acc = 0u; acc < 0x20u; ++acc) {
+      unsigned wr_offset = prng() % burst_len;
+      // Update the expectation.
+      switch () {
+        case 0:  wr_offset = ;
+        case 1:  wr_offset >>= 1;
+        default: wr_offset >>= 2;
+
+      }
+
+      // Decide upon a modification to perform.
+      switch () {
+        case 0: burst_bp[] = ;
+        case 1: burst_hp[] = ;
+        default: hyperram_area[burst_addr / 4 + wr_offset] = prng();
+      }
+
+      // Check some read data.
+      unsigned offset = prng() % (burst_len / 4);
+      uint32_t rd_data = hyperram_area[burst_addr / 4 + offset];
+    }
+  }
+#endif
   return failures;
 }
 
@@ -317,17 +380,21 @@ void hyperram_tests(CapRoot root, Log &log) {
     set_console_mode(log, CC_RESET);
     bool test_failed = false;
     int failures     = 0;
-#if 0
+
+#if 1
+#if 1
     log.print("  Running RND cap test...");
     failures = rand_cap_test(hyperram_area, hyperram_cap_area, prng, HYPERRAM_TEST_SIZE);
     test_failed |= (failures > 0);
     write_test_result(log, failures);
-
+#endif
+#if 1
     log.print("  Running RND data test...");
     failures = rand_data_test_full(hyperram_area, prng);
     test_failed |= (failures > 0);
     write_test_result(log, failures);
-
+#endif
+#if 1
     log.print("  Running RND data & address test...");
     failures = rand_data_addr_test(hyperram_area, prng, HYPERRAM_TEST_SIZE);
     test_failed |= (failures > 0);
@@ -337,22 +404,35 @@ void hyperram_tests(CapRoot root, Log &log) {
     failures = stripe_test(hyperram_area, 0x55555555);
     test_failed |= (failures > 0);
     write_test_result(log, failures);
-
+#endif
+#if 1
     log.print("  Running 1001 stripe test...");
     failures = stripe_test(hyperram_area, 0x99999999);
     test_failed |= (failures > 0);
     write_test_result(log, failures);
-
+#endif
+#if 1
     log.print("  Running 0000_1111 stripe test...");
     failures = stripe_test(hyperram_area, 0x0F0F0F0F);
     test_failed |= (failures > 0);
     write_test_result(log, failures);
-
+#endif
+// TODO: This one is presently problematic even with read-after-write change.
+#if 0
     log.print("  Running Execution test...");
     failures = execute_test(hyperram_area, prng, HYPERRAM_TEST_SIZE);
     test_failed |= (failures > 0);
     write_test_result(log, failures);
-#else
+#endif
+#if 0
+    log.print("  Buffering test...");
+    failures = buffering_test(hyperram_area, prng, 0x1000u);
+    log.print(" UNDER CONSTRUCTION ");
+    test_failed |= (failures > 0);
+    write_test_result(log, failures);
+#endif
+#endif
+#if 1
     log.print("  Performance test...");
     failures = perf_burst_test(hyperram_area, log, prng, 0x1000u);
     test_failed |= (failures > 0);
