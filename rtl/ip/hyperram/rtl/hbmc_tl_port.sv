@@ -14,6 +14,8 @@ module hbmc_tl_port import tlul_pkg::*; #(
   parameter int unsigned SeqWidth = 4,
   // Does this port need to support TileLink write operations?
   parameter bit SupportWrites = 1,
+  // Coalesce write transfers into burst writes to the HBMC?
+  parameter bit CoalesceWrites = 1,
 
   // Derived address bit parameters.
   localparam int unsigned ABIT = $clog2(top_pkg::TL_DW / 8),
@@ -41,32 +43,24 @@ module hbmc_tl_port import tlul_pkg::*; #(
   output logic   [top_pkg::TL_DW-1:0] wr_notify_data_o,
   output logic [HyperRAMAddrW-1:ABIT] wr_notify_addr_o,
 
-  // Interface to the write buffer
-  // TODO: There is no write buffer...
-  //input  logic [] wrbuf_base,
-  //input  logic [] wrbuf_valid,
-  //wrbuf_req
-  //wrbuf_gnt
-  //output logic [] wrbuf_data
-  //wrbuf_flush
-
   // Command data to the HyperRAM controller; command, address and burst length
-  output logic                        cmd_req,
-  output logic                        cmd_wvalid,
-  input                               cmd_wready,
-  output logic    [HyperRAMAddrW-1:1] cmd_mem_addr,
-  output logic                  [6:0] cmd_word_cnt,
-  output logic                        cmd_wr_not_rd,
-  output logic                        cmd_wrap_not_incr,
-  output logic         [SeqWidth-1:0] cmd_seq,
+  output logic                        cmd_req_o,
+  input                               cmd_wready_i,
+  output logic [HyperRAMAddrW-1:ABIT] cmd_mem_addr_o,
+  output logic  [Log2BurstLen-ABIT:0] cmd_word_cnt_o,
+  output logic                        cmd_wr_not_rd_o,
+  output logic                        cmd_wrap_not_incr_o,
+  output logic         [SeqWidth-1:0] cmd_seq_o,
+
   output logic                        tag_cmd_req,
-  output logic    [HyperRAMAddrW-1:1] tag_cmd_mem_addr,
+  output logic [HyperRAMAddrW-1:ABIT] tag_cmd_mem_addr,
   output logic                        tag_cmd_wr_not_rd,
   output                              tag_cmd_wcap,
-  output logic                        dfifo_wr_ena,
-  input                               dfifo_wr_full,
-  output        [top_pkg::TL_DBW-1:0] dfifo_wr_strb,
-  output         [top_pkg::TL_DW-1:0] dfifo_wr_din,
+
+  output logic                        dfifo_wr_ena_o,
+  input                               dfifo_wr_full_i,
+  output        [top_pkg::TL_DBW-1:0] dfifo_wr_strb_o,
+  output         [top_pkg::TL_DW-1:0] dfifo_wr_din_o,
 
   // Read data from the HyperRAM
   output                              ufifo_rd_ena,
@@ -80,15 +74,13 @@ module hbmc_tl_port import tlul_pkg::*; #(
   input                               tl_tag_bit
 );
 
-// TODO: Do we support in-situ updating?
-`define UPDATING
-
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
   logic tl_req_fifo_wready;
   logic tl_req_fifo_le1;
   logic wr_notify_match;
-  logic tl_a_ready;
+  logic dfifo_wr_full;
+  logic cmd_wready;
   logic can_accept;
   logic rdbuf_hit;
   logic rdbuf_re;
@@ -100,15 +92,13 @@ module hbmc_tl_port import tlul_pkg::*; #(
   // If a read hits in the buffer but the data is not yet available, wait until it arrives
   // from the HyperRAM controller.
   //
-  // TODO: If a read hits in the RAM we wait until the TL request FIFO has at most a single entry
-  // because we don't have a FIFO for the read data itself; perhaps we should change this?
+  // Note: If a read hits in the RAM we wait until the TL request FIFO has at most a single entry
+  // because we don't have a FIFO for the read data itself.
 
   assign can_accept = tl_req_fifo_wready &&
                      ((rdbuf_re && tl_req_fifo_le1) || (!rdbuf_hit && cmd_wready)) &&
                      (tl_i.a_opcode == Get || ~dfifo_wr_full) &
                      ~(wr_notify_i & wr_notify_match);
-
-  assign tl_a_ready = tl_i.a_valid & can_accept;
 
 /*----------------------------------------------------------------------------------------------------------------------------*/
 
@@ -123,7 +113,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
         wr_notify_o <= 1'b0;
       end else begin
         // Notification of a write occurring on this port.
-        wr_notify_o      <= wr_req & tl_a_ready;
+        wr_notify_o      <= wr_req & can_accept;
         // Address to which the write was performed.
         wr_notify_addr_o <= tl_i.a_address[HyperRAMAddrW-1:ABIT];
         // Mask specifying the sub-words being written.
@@ -133,7 +123,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
       end
     end
   end else begin
-    // TODO: Generate a TL-UL error response in this case if `wr_req` is asserted.
+    // Do not issue write notifications from this port.
     assign wr_notify_o      = 1'b0;
     assign wr_notify_addr_o = '0;
     assign wr_notify_mask_o = '0;
@@ -150,10 +140,9 @@ module hbmc_tl_port import tlul_pkg::*; #(
 
   // Invalidate the read buffer contents when a write occurs.
   //
-  // Write notifications have the highest priority and must immediately
-  // invalidate the contents of the read buffer in the event of a collision. `wr_notify_i` is
-  // asserted for a single cycle.
-`ifdef UPDATING
+  // Write notifications have the highest priority and must immediately update or invalidate
+  // the contents of the read buffer in the event of a collision. `wr_notify_i` is asserted for a
+  // single cycle.
   logic wr_notify_valid;
   wire wr_notify_update = &{wr_notify_i, wr_notify_match, wr_notify_valid};
   wire rdbuf_update = wr_notify_update | &{SupportWrites, wr_req, rdbuf_matches, rdbuf_valid};
@@ -168,9 +157,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
   assign uoffset = wr_notify_update ? wr_notify_addr_i[BBIT-1:ABIT] : tl_i.a_address[BBIT-1:ABIT];
   assign umask   = wr_notify_update ? wr_notify_mask_i : tl_i.a_mask;
   assign udata   = wr_notify_update ? wr_notify_data_i : tl_i.a_data;
-`else
-  wire rdbuf_invalidate = (wr_notify_i & wr_notify_match) | (wr_req & rdbuf_matches);
-`endif
+
   // Issue a new burst read if a read is performed outside of the current buffered address range.
   wire rdbuf_set   = rd_req & ~rdbuf_matches & issue;
   assign rdbuf_hit = rd_req &  rdbuf_matches;
@@ -181,6 +168,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
   hyperram_rdbuf #(
     .AW           (HyperRAMAddrW),
     .DW           (top_pkg::TL_DW),
+    .DBW          (top_pkg::TL_DBW),
     .PortIDWidth  (PortIDWidth),
     .SeqWidth     (SeqWidth),
     .BBIT         (BBIT)
@@ -248,14 +236,15 @@ module hbmc_tl_port import tlul_pkg::*; #(
 
   // We need to express our intention to write into the command buffer, to be a contender
   // in the arbitration.
-  assign cmd_req = tl_i.a_valid && tl_req_fifo_wready && !rdbuf_hit &&
-                   (tl_i.a_opcode == Get || ~dfifo_wr_full);
+  wire cmd_req = tl_i.a_valid && tl_req_fifo_wready && !rdbuf_hit &&
+                (tl_i.a_opcode == Get || ~dfifo_wr_full);
 
   assign issue = tl_i.a_valid & can_accept;
 
   // Logic for handling incoming TileLink requests
+  logic cmd_wr_not_rd;
+  logic dfifo_wr_ena;
   always_comb begin
-    cmd_wvalid         = 1'b0;
     cmd_wr_not_rd      = (tl_i.a_opcode != Get);
     tag_cmd_req        = 1'b0;
     dfifo_wr_ena       = 1'b0;
@@ -263,7 +252,6 @@ module hbmc_tl_port import tlul_pkg::*; #(
 
     if (issue) begin
       // Write to the relevant FIFOs and indicate ready on TileLink A channel
-      cmd_wvalid         = !rdbuf_re;
       tag_cmd_req        = 1'b1;
       tl_req_fifo_wvalid = 1'b1;
 
@@ -274,14 +262,10 @@ module hbmc_tl_port import tlul_pkg::*; #(
   end
 
   assign tag_cmd_wr_not_rd = cmd_wr_not_rd;
-  assign tag_cmd_mem_addr = tl_i.a_address[HyperRAMAddrW-1:1];
+  assign tag_cmd_mem_addr = tl_i.a_address[HyperRAMAddrW-1:ABIT];
 
   wire tl_cmd_fetch = !rdbuf_re;
   wire tl_cmd_wr_not_rd = (tl_i.a_opcode != Get);
-
-  // Data to be written into the Downstream FIFO.
-  assign dfifo_wr_strb = tl_i.a_mask;
-  assign dfifo_wr_din  = tl_i.a_data;
 
   assign tl_req_fifo_wdata = '{
     tl_source     : tl_i.a_source,
@@ -357,7 +341,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
     tl_o_int.d_data            = rdbuf_valid_q ? rdbuf_dout_q :
                                 (tl_req_fifo_rdata.cmd_fetch ? ufifo_dout_first : rdbuf_dout);
     tl_o_int.d_user.capability = tl_tag_bit;
-    tl_o_int.a_ready           = tl_a_ready;
+    tl_o_int.a_ready           = issue;
   end
 
   // Complete the TL request as soon the response is accepted; this avoids the need to register
@@ -398,19 +382,86 @@ module hbmc_tl_port import tlul_pkg::*; #(
   );
 
   // Command requests to the HyperRAM controller.
-  assign cmd_mem_addr      = tl_i.a_address[HyperRAMAddrW-1:1];
-  assign cmd_word_cnt      = (tl_i.a_opcode == Get) ? (7'h1 << (Log2BurstLen - 1)) : 7'd2;
+  //
+  // If this port performs write coalescing, these commands may be modified or suppressed by the
+  // `hyperram_wrbuf` instance below.
+  wire [HyperRAMAddrW-1:ABIT] cmd_mem_addr = tl_i.a_address[HyperRAMAddrW-1:ABIT];
+  wire [Log2BurstLen-ABIT:0]  cmd_rd_len   = {1'b1, {(Log2BurstLen-ABIT){1'b0}}};  // Full burst.
+  wire [Log2BurstLen-ABIT:0]  cmd_wr_len   = {{(Log2BurstLen-ABIT){1'b0}}, 1'b1};  // Single word.
+  wire [Log2BurstLen-ABIT:0]  cmd_word_cnt = (tl_i.a_opcode == Get) ? cmd_rd_len : cmd_wr_len;
   // Write bursts are linear, reads wrap. Since we're not performing extensive write bursts
   // presently, wrapping does not impact write behaviour, but using linear bursts on writes prevents
   // the HBMC from repeatedly changing the programmed burst length.
-  assign cmd_wrap_not_incr = (tl_i.a_opcode == Get);
-  assign cmd_seq           = rdbuf_seq;
+  wire cmd_wrap_not_incr = (tl_i.a_opcode == Get);
+  wire [SeqWidth-1:0] cmd_seq = rdbuf_seq;
 
   assign tag_cmd_wcap = tl_i.a_user.capability;
 
+  // Write buffer performs basic write coalescing to produce larger write bursts.
+  if (SupportWrites && CoalesceWrites) begin : gen_write_buffer
+    // This logic sits between the TL-UL handling and the Command and Downstream
+    // Data FIFOs, modifying the traffic.
+    // It must also be aware of HyperRAM reads in order to flush out any buffered
+    // write data first in the event of a collision.
+    hyperram_wrbuf #(
+      .AW           (HyperRAMAddrW),
+      .DW           (top_pkg::TL_DW),
+      .DBW          (top_pkg::TL_DBW),
+      .Log2BurstLen (Log2BurstLen),
+      .SeqWidth     (SeqWidth)
+    ) u_writebuf(
+      .clk_i                (clk_i),
+      .rst_ni               (rst_ni),
+
+      // Data to be written into the Downstream FIFO.
+      .dfifo_wr_full_o      (dfifo_wr_full),
+      .dfifo_wr_strb_i      (tl_i.a_mask),
+      .dfifo_wr_din_i       (tl_i.a_data),
+
+      // Input command requests for any TL-UL operation that could not be fully
+      // satisfied by the read buffer.
+      .cmd_req_i            (cmd_req),
+      .cmd_wready_o         (cmd_wready),
+      .cmd_mem_addr_i       (cmd_mem_addr),
+      .cmd_word_cnt_i       (cmd_word_cnt),
+      .cmd_wr_not_rd_i      (cmd_wr_not_rd),
+      .cmd_seq_i            (cmd_seq),
+
+      // Modified write traffic to the Downstream FIFO.
+      .dfifo_wr_ena_o       (dfifo_wr_ena_o),
+      .dfifo_wr_full_i      (dfifo_wr_full_i),
+      .dfifo_wr_strb_o      (dfifo_wr_strb_o),
+      .dfifo_wr_din_o       (dfifo_wr_din_o),
+
+      // Modified command requests to the HyperRAM controller.
+      .cmd_req_o            (cmd_req_o),
+      .cmd_wready_i         (cmd_wready_i),
+      .cmd_mem_addr_o       (cmd_mem_addr_o),
+      .cmd_word_cnt_o       (cmd_word_cnt_o),
+      .cmd_wr_not_rd_o      (cmd_wr_not_rd_o),
+      .cmd_wrap_not_incr_o  (cmd_wrap_not_incr_o),
+      .cmd_seq_o            (cmd_seq_o)
+    );
+  end else begin : gen_no_write_buffer
+    // Commands to the HyperRAM controller propagate unmodified.
+    assign cmd_req_o           = cmd_req;
+    assign cmd_wready          = cmd_wready_i;
+    assign cmd_mem_addr_o      = cmd_mem_addr;
+    assign cmd_word_cnt_o      = cmd_word_cnt;
+    assign cmd_wr_not_rd_o     = cmd_wr_not_rd;
+    assign cmd_wrap_not_incr_o = cmd_wrap_not_incr;
+    assign cmd_seq_o           = cmd_seq;
+
+    // Data to be written into the Downstream FIFO.
+    assign dfifo_wr_ena_o  = dfifo_wr_ena;
+    assign dfifo_wr_full   = dfifo_wr_full_i;
+    assign dfifo_wr_strb_o = tl_i.a_mask;
+    assign dfifo_wr_din_o  = tl_i.a_data;
+  end
+
   // Unused signals.
   logic unused;
-  assign unused = ^{tl_i.d_ready, tl_i.a_param};
+  assign unused = ^tl_i.a_param;
 
 endmodule
 
