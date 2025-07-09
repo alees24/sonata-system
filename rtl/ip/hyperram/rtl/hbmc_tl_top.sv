@@ -116,7 +116,8 @@ module hbmc_tl_top import tlul_pkg::*; #(
      into the slower clock domain, it can take 4 system clock cycles to collect the first word.
   */
   localparam int unsigned UDataWidth = top_pkg::TL_DW;
-  localparam int unsigned UFIFODepth = 1 << (Log2BurstLen - ABIT);
+  localparam int unsigned UFIFODepth = 2 << (Log2BurstLen - ABIT);
+  // TODO: Experimentally modified for 200MHz
 
   /* The Downstream FIFO to the HyperRAM controller must be wide enough and deep enough to
    * accommodate all of the write data for a burst, because once the write command data will be
