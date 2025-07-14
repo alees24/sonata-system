@@ -5,15 +5,15 @@ set(TESTS
   test_runner.cc
 )
 
-set(NAME hyperram_perf_test)
-add_library(${NAME} OBJECT hyperram_perf_test.S)
+set(NAME hyperram_tests)
+add_library(${NAME} OBJECT hyperram_memset.S hyperram_perf_test.S)
 
 foreach(TEST ${TESTS})
   get_filename_component(NAME ${TEST} NAME_WE)
 
   add_executable(${NAME} ${TEST})
   target_include_directories(${NAME} PRIVATE ${CHERIOT_SDK_INCLUDES} "${reisfmt_SOURCE_DIR}/include")
-  target_link_libraries(${NAME} common block_tests hyperram_perf_test)
+  target_link_libraries(${NAME} common block_tests hyperram_tests)
 
   install(TARGETS ${NAME})
 endforeach()

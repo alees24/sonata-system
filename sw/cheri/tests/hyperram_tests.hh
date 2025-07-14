@@ -1,5 +1,5 @@
-
 // Copyright lowRISC Contributors.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
@@ -219,9 +219,11 @@ void write_prog(Capability<volatile uint32_t> hyperram_area, uint32_t addr) {
 
   asm volatile("fence.i" : : : "memory");
 
-  // Read back from the memory to ensure that the burst write completes.
+  // By writing the first word of the code again we can ensure that the code is
+  // flushed out to the HyperRAM and will thus be coherent with instruction
+  // fetching when the code is executed.
   // TODO: Decide whether we want to live with this solution.
-  volatile uint32_t rd_data = hyperram_area[addr];
+  hyperram_area[addr] = hyperram_area[addr];
 }
 
 /*
@@ -324,17 +326,23 @@ int buffering_test(Capability<volatile uint32_t> hyperram_area, ds::xoroshiro::P
 extern "C" volatile void *hyperram_copy_block(volatile void *d, const volatile void *s, size_t nbytes);  
 extern uint32_t hyperram_copy_size;
 
-int perf_burst_test(Capability<volatile uint32_t> hyperram_area, Log &log, ds::xoroshiro::P64R32 &prng, size_t nbytes) {
+// TODO: We should be able to execute this test with the icache enabled/disabled.
+int perf_burst_test(Capability<volatile uint32_t> hyperram_area, Log &log, ds::xoroshiro::P64R32 &prng, size_t nbytes, uint32_t dst_addr = UINT32_MAX, uint32_t src_addr = UINT32_MAX) {
   int failures = 0;
 
   // Randomised word offsets.
-  uint32_t dst_addr = prng() & 0x3ffu;
-  uint32_t src_addr = 0x800u - dst_addr;
+  if (dst_addr == UINT32_MAX) {
+    dst_addr = prng() & 0x3ffu;
+  }
+  if (src_addr == UINT32_MAX) {
+    // TODO: This was just for convenience; fix this up properly to ensure disjoint buffers, it's a performance test.
+    src_addr = 0x800u - dst_addr;
+  }
 
   volatile uint32_t *d = &hyperram_area[dst_addr];
   volatile uint32_t *s = &hyperram_area[src_addr];
 
-  log.println("copy_block code is {} bytes", hyperram_copy_size);
+  // log.println("copy_block code is {} bytes", hyperram_copy_size);
   // Copy the code into the HyperRAM, using itself.
   const uint32_t prog_addr = 0x903u;
   hyperram_copy_block(&hyperram_area[prog_addr], (volatile uint32_t *)hyperram_copy_block, hyperram_copy_size);
@@ -345,7 +353,7 @@ int perf_burst_test(Capability<volatile uint32_t> hyperram_area, Log &log, ds::x
   // TODO: We should ensure that the buffers are disjoint, initialise the source and QUICKLY check
   // the destination.
 
-  for (unsigned code_in_hr = 0; code_in_hr < 2; code_in_hr++) {
+  for (unsigned code_in_hr = 0; code_in_hr < 2; ++code_in_hr) {
     volatile uint32_t start_time = get_mcycle();
 
     // TODO: We want to extend this to copy partial words at some point.
@@ -363,12 +371,183 @@ int perf_burst_test(Capability<volatile uint32_t> hyperram_area, Log &log, ds::x
   return failures;
 }
 
+// Memory-writing routines; these all have the same prototype as the ISO C memset, but very
+// specific implementations to ensure defined traffic for testing the write coalescing/buffering
+// logic of the HyperRAM controller interface.
+extern "C" void hyperram_memset_b(volatile  uint8_t  *dst, int c, size_t n);
+extern "C" void hyperram_memset_h(volatile  uint16_t *dst, int c, size_t n);
+extern "C" void hyperram_memset_hb(volatile uint16_t *dst, int c, size_t n);
+extern "C" void hyperram_memset_w(volatile  uint32_t *dst, int c, size_t n);
+extern "C" void hyperram_memset_wr(volatile uint32_t *dst, int c, size_t n);
+extern "C" void hyperram_memset_wd(volatile uint32_t *dst, int c, size_t n);
+extern "C" void hyperram_memset_c(volatile  uint64_t *dst, int c, size_t n);
+extern "C" void hyperram_memset_cd(volatile uint64_t *dst, int c, size_t n);
+
+enum WriteTestType {
+  WriteTestType_B = 0,
+  WriteTestType_H,
+  WriteTestType_HB,
+  WriteTestType_W,
+  WriteTestType_WR,
+  WriteTestType_WD,
+  WriteTestType_C,
+  WriteTestType_CD
+};
+
+int write_tests(Capability<volatile uint8_t>  hyperram_b_area, Capability<volatile uint16_t> hyperram_h_area,
+                Capability<volatile uint32_t> hyperram_w_area, Capability<volatile uint64_t> hyperram_d_area,
+                ds::xoroshiro::P64R32 &prng, Log &log, WriteTestType test_type, int iterations = 1,
+                uint32_t dst_addr = UINT32_MAX, uint32_t src_addr = UINT32_MAX) {
+  int failures = 0;
+
+  for (int iter = 0; iter < iterations; ++iter) {
+    uint32_t dst_off = dst_addr;
+    uint32_t src_off = src_addr;
+
+    // Choose a random start address and whether we are to intersperse reads.
+
+    bool intersperse_reads = ((prng() & 1u) != 0u);
+// TODO: bring up; the code below requires completing.
+intersperse_reads = false;
+
+    if (UINT32_MAX == dst_off) {
+      dst_off = prng() & 0x3ffu;
+    }
+    if (UINT32_MAX == src_off) {
+      src_off = prng() & 0x3ffu;
+    }
+    const uint32_t ctrl_off = 0x400u;
+
+    // Choose a random byte value to store, and a constrained length.
+    uint32_t data = (uint8_t)prng();
+    data |= data << 8;
+    data |= data << 16;
+    // Write at least 32 bytes and up to 95 into a buffer of 128.
+    size_t len = 0x20u + (prng() & 0x3fu);
+    const uint32_t init_len = 0x80u;
+
+// TODO: NO TAIL CODE YET SIR! SO IMPLEMENT IT!
+len = (len + 31u) & ~31u;
+
+    // Dword, word, hword and bytes aliases to the chosen target buffer.
+    volatile uint64_t *dstd = &hyperram_d_area[(dst_off + 7u) >> 3];
+    volatile uint32_t *dstw = &hyperram_w_area[(dst_off + 3u) >> 2];
+    volatile uint16_t *dsth = &hyperram_h_area[(dst_off + 1u) >> 1];
+    volatile uint8_t  *dstb = &hyperram_b_area[dst_off];
+    // End of target buffer; these addresses are exclusive, i.e. the pointers reference
+    // the first value _above_ the range to be modified.
+    volatile uint64_t *edstd = &hyperram_d_area[(dst_off + len + 7u) >> 3];
+    volatile uint32_t *edstw = &hyperram_w_area[(dst_off + len + 3u) >> 2];
+//log.println("{:0x010x} {:0x010x} {:0x010x} {:0x010x} {:0x010x} {:0x010x} {:0x010x}",
+//            (uint32_t)dstb, (uint32_t)dsth, (uint32_t)dstw, (uint32_t)dstd, (uint32_t)edstw, (uint32_t)edstd, len);
+
+    // The different tests have different alignment requirements so determine the offset
+    // of the lowest address at which writing should be expected to occur.
+    uint32_t exp_start = 0u;
+    switch (test_type) {
+      // Byte-aligned test cases.
+      case WriteTestType_B:  exp_start = 0u; break;
+      // Half word-aligned test cases.
+      case WriteTestType_H:
+      case WriteTestType_HB: exp_start = (2u - (dst_off & 1u)) & 1u; break;
+      // Word-aligned test cases.
+      case WriteTestType_WR:
+      case WriteTestType_W:  exp_start = (4u - (dst_off & 3u)) & 3u; break;
+      case WriteTestType_WD: exp_start = ((dst_off + len + 3u) & ~3u) - (dst_off + len); break;
+      // Double word-aligned test cases.
+      case WriteTestType_C:  exp_start = (8u - (dst_off & 7u)) & 7u; break;
+      case WriteTestType_CD: exp_start = ((dst_off + len + 7u) & ~7u) - (dst_off + len); break;
+      default: exp_start = 0u; break;
+    }
+
+    // Initialise the control area.
+    hyperram_memset_w(&hyperram_w_area[ctrl_off >> 2], 0u, init_len);
+
+    // Initialise the target area, using data that we know should never be stored in the
+    // ensuing memory writing code. Thus we maximise the chance of detecting any bytes
+    // that are erroneously overwritten.
+    hyperram_memset_b(dstb, ~data, init_len);
+
+    log.print("{},", (int)test_type);
+
+    uint32_t bytes_left = len;
+    while (bytes_left > 0u) {
+      // Decide upon a word-aligned offset from which to read; do this before the
+      // memory writing because the random number generation is time-consuming and we want
+      // to test the interaction of the read with the under-construction write burst.
+      uint32_t rd_off = prng() % init_len;
+      size_t chunk_len = intersperse_reads ? (1u + (prng() % bytes_left)) : bytes_left;
+// TODO: non-final chunks must observe alignment requirement of test.
+      switch (test_type) {
+        case WriteTestType_B:  hyperram_memset_b(dstb,   data, chunk_len); break;
+        case WriteTestType_H:  hyperram_memset_h(dsth,   data, chunk_len); break;
+        // HB test writes two bytes and a half-word, so it requires half-word alignment.
+        case WriteTestType_HB: hyperram_memset_hb(dsth,  data, chunk_len); break;
+        case WriteTestType_W:  hyperram_memset_w(dstw,   data, chunk_len); break;
+        case WriteTestType_WR: hyperram_memset_wr(dstw,  data, chunk_len); break;
+        case WriteTestType_WD: hyperram_memset_wd(edstw, data, chunk_len); break;
+        case WriteTestType_C:  hyperram_memset_c(dstd,   data, chunk_len); break;
+        case WriteTestType_CD: hyperram_memset_cd(edstd, data, chunk_len); break;
+        default: break;
+      }
+      // Interject a read at this point, to test its interaction with the coalescing of
+      // writes into bursts.
+      if (intersperse_reads) {
+        volatile uint32_t rd_data = hyperram_w_area[rd_off >> 2];
+        // TODO: We should probably check the returned data.
+      }
+
+      // Advance the destination pointers for the next chunk;
+      dstb += chunk_len;
+      dsth += chunk_len >> 1;
+      dstw += chunk_len >> 2;
+      dstd += chunk_len >> 3;
+      bytes_left -= chunk_len;
+    }
+
+    // Read and check the control area; this primarily serves to ensure that we are checking
+    // what was written to the HyperRAM itself, and not merely the contents of the internal
+    // read buffer within the controller interface.
+    for (uint32_t i = 0u; i < 0x80 / 4; i++) {
+      failures += (hyperram_w_area[i + (ctrl_off >> 2)] != 0u);
+    }
+
+    // Read and check the entire target area.
+    for (uint32_t i = 0u; i < len; i++) {
+      // This is the default value with which the target area was initialised.
+      uint8_t exp_data = (uint8_t)~data;
+      // Does the byte that we're checking lie within the range that should have been overwritten?
+      if (i >= exp_start && (i - exp_start) < len) exp_data = ~exp_data;
+      // log.println("{}  {} {}", i + dst_off, hyperram_b_area[i + dst_off], exp_data);
+if (hyperram_b_area[i + dst_off] != exp_data) {
+  log.println("{}: act {} exp {} [{}/{}]", (int)test_type, hyperram_b_area[i + dst_off], exp_data, i, len);
+    while (1) asm (" ");
+}
+      failures += (hyperram_b_area[i + dst_off] != exp_data);
+    }
+  }
+
+  return failures;
+}
+
 void hyperram_tests(CapRoot root, Log &log) {
+  // Default is word-based accesses, which is sufficient for most tests.
   auto hyperram_area = hyperram_ptr(root);
 
   Capability<Capability<volatile uint32_t>> hyperram_cap_area = root.cast<Capability<volatile uint32_t>>();
   hyperram_cap_area.address()                                 = HYPERRAM_ADDRESS;
   hyperram_cap_area.bounds()                                  = HYPERRAM_BOUNDS;
+
+  // We also want byte, hword and dword access for some tests.
+  Capability<volatile uint8_t> hyperram_b_area = root.cast<volatile uint8_t>();
+  hyperram_b_area.address() = HYPERRAM_ADDRESS;
+  hyperram_b_area.bounds() = HYPERRAM_BOUNDS;
+  Capability<volatile uint16_t> hyperram_h_area = root.cast<volatile uint16_t>();
+  hyperram_h_area.address() = HYPERRAM_ADDRESS;
+  hyperram_h_area.bounds() = HYPERRAM_BOUNDS;
+  Capability<volatile uint64_t> hyperram_d_area = root.cast<volatile uint64_t>();
+  hyperram_d_area.address() = HYPERRAM_ADDRESS;
+  hyperram_d_area.bounds() = HYPERRAM_BOUNDS;
 
   ds::xoroshiro::P64R32 prng;
   prng.set_state(0xDEADBEEF, 0xBAADCAFE);
@@ -418,7 +597,7 @@ void hyperram_tests(CapRoot root, Log &log) {
     write_test_result(log, failures);
 #endif
 // TODO: This one is presently problematic even with read-after-write change.
-#if 0
+#if 1
     log.print("  Running Execution test...");
     failures = execute_test(hyperram_area, prng, HYPERRAM_TEST_SIZE);
     test_failed |= (failures > 0);
@@ -432,9 +611,30 @@ void hyperram_tests(CapRoot root, Log &log) {
     write_test_result(log, failures);
 #endif
 #endif
-#if 1
-    log.print("  Performance test...");
+#if 0
+    // TODO: This test will be useful externally when the perf_burst_test actually does check
+    // the results.
+    log.print("  Alignment tests...");
+    for (uint32_t src_addr = 0u; src_addr < 0x200u; src_addr += 4u)
+      for (uint32_t dst_addr = 0u; dst_addr < 0x20u; dst_addr += 4u) {
+        log.print("    dst: {:#02x} src: {:#02x}", dst_addr, src_addr);
+        failures = perf_burst_test(hyperram_area, log, prng, 0x1000u, dst_addr, src_addr);
+        test_failed |= (failures > 0);
+        write_test_result(log, failures);
+      }
+#endif
+#if 0
+    log.println("  Performance test...");
     failures = perf_burst_test(hyperram_area, log, prng, 0x1000u);
+    test_failed |= (failures > 0);
+    write_test_result(log, failures);
+#endif
+#if 1
+    log.println("  Write tests...");
+    for (int test_type = WriteTestType_B; test_type <= WriteTestType_CD; ++test_type) {
+      failures = write_tests(hyperram_b_area, hyperram_h_area, hyperram_area, hyperram_d_area,
+                             prng, log, (WriteTestType)test_type, HYPERRAM_TEST_ITERATIONS);
+    }
     test_failed |= (failures > 0);
     write_test_result(log, failures);
 #endif
