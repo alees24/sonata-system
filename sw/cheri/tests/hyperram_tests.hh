@@ -623,7 +623,7 @@ void hyperram_tests(CapRoot root, Log &log) {
         write_test_result(log, failures);
       }
 #endif
-#if 0
+#if 1
     log.println("  Performance test...");
     failures = perf_burst_test(hyperram_area, log, prng, 0x1000u);
     test_failed |= (failures > 0);

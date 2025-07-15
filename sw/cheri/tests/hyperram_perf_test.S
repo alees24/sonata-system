@@ -32,32 +32,36 @@
 // a2  =  number of bytes to copy
 // return -> beyond destination data.
 hyperram_copy_block:
+  srl a3, a2, 5
   addi a2, a2, -32
   bltz a2, copy32fix
 // TODO: cincaddr ca2, ca1, a2
 // Ouroboros?
+  sll a3, a3, 5  
+  cincoffset ca3, ca1, a3
 copy32:
-  clw a3,   (ca1)
-  clw a4,  4(ca1)
-  clw a5,  8(ca1)
-  clw t0, 12(ca1)
-  csw a3,   (ca0)
-  csw a4,  4(ca0)
-  csw a5,  8(ca0)
-  csw t0, 12(ca0)
-  clw a3, 16(ca1)
-  clw a4, 20(ca1)
-  clw a5, 24(ca1)
-  clw t0, 28(ca1)
+  clw a5,   (ca1)
+  clw t0,  4(ca1)
+  clw t1,  8(ca1)
+  clw t2, 12(ca1)
+  csw a5,   (ca0)
+  csw t0,  4(ca0)
+  csw t1,  8(ca0)
+  csw t2, 12(ca0)
+  clw a5, 16(ca1)
+  clw t0, 20(ca1)
+  clw t1, 24(ca1)
+  clw t2, 28(ca1)
   cincoffset ca1, ca1, 32
-  csw a3, 16(ca0)
-  csw a4, 20(ca0)
-  csw a5, 24(ca0)
-  csw t0, 28(ca0)
+  csw a5, 16(ca0)
+  csw t0, 20(ca0)
+  csw t1, 24(ca0)
+  csw t2, 28(ca0)
   cincoffset ca0, ca0, 32
 // TODO: This is noob code!
-  addi a2, a2, -32
-  bgez a2, copy32
+//  addi a2, a2, -32
+//  bgez a2, copy32
+  bltu a1, a3, copy32
 copy32fix:
   addi a2, a2, 28
   bltz a2, copy4fix
