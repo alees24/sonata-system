@@ -39,7 +39,15 @@
             patch_dir: "dv_tools"
         },
 
-        {from: "hw/dv/verilator",      to: "dv/verilator"},
+        // This more extensive patch extends the Verilator C++ test bench to
+        // support multiple clocks having different frequencies and phases, and
+        // optionally jitter. The upstream OpenTitan repository supports only
+        // a single, fixed-frequency clock signal.
+        {
+            from:      "hw/dv/verilator",
+            to:        "dv/verilator"
+            patch_dir: "dv_verilator"
+        },
 
         {
             from: "hw/ip/prim",
