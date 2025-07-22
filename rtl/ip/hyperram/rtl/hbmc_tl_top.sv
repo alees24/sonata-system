@@ -83,15 +83,20 @@ module hbmc_tl_top import tlul_pkg::*; #(
   inout  wire    [7:0] hb_dq
 );
 
+  // Maximum number of data buffers per port.
+  localparam int unsigned MaxBufs = 4;
+
   // Two TL-UL access ports.
   localparam int unsigned PortD = 0;
   localparam int unsigned PortI = 1;
 
   // Width of port ID numbers, in bits.
   localparam int unsigned PortIDWidth = $clog2(NumPorts);
-  // Up to 4 outstanding requests from a port, +1 for invalidation and a further bit for the
-  // port number of the requester.
-  localparam int unsigned SeqWidth = PortIDWidth + 3;
+  localparam int unsigned Log2MaxBufs = $clog2(MaxBufs);
+  // Up to 4 outstanding requests from a single buffer +1 for invalidation, plus
+  // bits to identify the buffer number, and a further bit for the port number of
+  // the requester.
+  localparam int unsigned SeqWidth = PortIDWidth + Log2MaxBufs + 3;
 
   localparam int unsigned HyperRAMAddrW = $clog2(HyperRAMSize);
   // LSB of word address.
@@ -290,7 +295,9 @@ module hbmc_tl_top import tlul_pkg::*; #(
     hbmc_tl_port #(
       .HyperRAMAddrW  (HyperRAMAddrW),
       .Log2BurstLen   (Log2BurstLen),
+      .NumBufs        (MaxBufs),
       .PortIDWidth    (PortIDWidth),
+      .Log2MaxBufs    (Log2MaxBufs),
       .SeqWidth       (SeqWidth),
       .SupportWrites  (p == PortD)  // Only the data port supports writing.
     ) u_port(

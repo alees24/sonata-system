@@ -10,8 +10,11 @@ module hbmc_tl_port import tlul_pkg::*; #(
   parameter int unsigned HyperRAMAddrW = 20,
   // log2(burst length in bytes)
   parameter int unsigned Log2BurstLen = 5,  // 32-byte bursts.
+  parameter int unsigned NumBufs = 4,
   parameter int unsigned PortIDWidth = 1,
-  parameter int unsigned SeqWidth = 4,
+  parameter int unsigned Log2MaxBufs = 2,
+  parameter int unsigned SeqWidth = 6,
+  //
   // Does this port need to support TileLink write operations?
   parameter bit SupportWrites = 1,
   // Coalesce write transfers into burst writes to the HBMC?
@@ -89,14 +92,16 @@ module hbmc_tl_port import tlul_pkg::*; #(
   // We can accept an incoming TileLink transaction when we've got space in the hyperram, tag
   // and TileLink request FIFOs. If we're taking in a write transaction we also need space in the
   // downstream FIFO(dfifo) for the write data.
+  //
   // If a read hits in the buffer but the data is not yet available, wait until it arrives
-  // from the HyperRAM controller.
+  // from the HyperRAM controller. This is indicated by the 'valid' bit becoming set for that data
+  // word.
   //
   // Note: If a read hits in the RAM we wait until the TL request FIFO has at most a single entry
   // because we don't have a FIFO for the read data itself.
 
   assign can_accept = tl_req_fifo_wready &&
-                     ((rdbuf_re && tl_req_fifo_le1) || (!rdbuf_hit && cmd_wready)) &&
+                     ((rd_req & rdbuf_valid & tl_req_fifo_le1) || (!rdbuf_hit && cmd_wready)) &&
                      (tl_i.a_opcode == Get || ~dfifo_wr_full) &
                      ~(wr_notify_i & wr_notify_match);
 
@@ -145,7 +150,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
   // single cycle.
   logic wr_notify_valid;
   wire wr_notify_update = &{wr_notify_i, wr_notify_match, wr_notify_valid};
-  wire rdbuf_update = wr_notify_update | &{SupportWrites, wr_req, rdbuf_matches, rdbuf_valid};
+  wire rdbuf_update = wr_notify_update | &{SupportWrites, wr_req, rdbuf_valid};
   wire rdbuf_invalidate = &{wr_notify_i, wr_notify_match, ~wr_notify_valid} |
                           &{SupportWrites, wr_req, rdbuf_matches, ~rdbuf_valid};
 
@@ -161,7 +166,9 @@ module hbmc_tl_port import tlul_pkg::*; #(
   // Issue a new burst read if a read is performed outside of the current buffered address range.
   wire rdbuf_set   = rd_req & ~rdbuf_matches & issue;
   assign rdbuf_hit = rd_req &  rdbuf_matches;
-  assign rdbuf_re  = &{rd_req, rdbuf_matches, rdbuf_valid};  // Read data available.
+  // Read data available and can issue the read in this cycle. The read buffer will return the
+  // data in the following cycle.
+  assign rdbuf_re  = &{rd_req, rdbuf_valid, issue};
 
   // Read buffer retains up to a single burst of data read from the HyperRAM for this port;
   // the data arrives incrementally and may be returned as soon as it becomes available.
@@ -169,6 +176,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
     .AW           (HyperRAMAddrW),
     .DW           (top_pkg::TL_DW),
     .DBW          (top_pkg::TL_DBW),
+    .NumBufs      (NumBufs),
     .PortIDWidth  (PortIDWidth),
     .SeqWidth     (SeqWidth),
     .BBIT         (BBIT)
@@ -179,6 +187,9 @@ module hbmc_tl_port import tlul_pkg::*; #(
     // Constant indicating port number.
     .portid_i         (portid_i),
 
+// TODO: If we run with multiple buffers then we probably want to migrate some logic and
+// modify the interface to rdbuf.
+.wr_notify_i     (wr_notify_i),
     // Control/configuration.
     .invalidate_i     (rdbuf_invalidate),
     .set_i            (rdbuf_set),
@@ -264,7 +275,7 @@ module hbmc_tl_port import tlul_pkg::*; #(
   assign tag_cmd_wr_not_rd = cmd_wr_not_rd;
   assign tag_cmd_mem_addr = tl_i.a_address[HyperRAMAddrW-1:ABIT];
 
-  wire tl_cmd_fetch = !rdbuf_re;
+  wire tl_cmd_fetch = ~(rd_req & rdbuf_valid);
   wire tl_cmd_wr_not_rd = (tl_i.a_opcode != Get);
 
   assign tl_req_fifo_wdata = '{
@@ -297,18 +308,18 @@ module hbmc_tl_port import tlul_pkg::*; #(
 
   // If the data from the read buffer is not accepted immediately by the host we must register it
   // to prevent it being invalidated by another read.
-  logic rdbuf_valid_q;
-  logic [top_pkg::TL_DW-1:0] rdbuf_dout_q;
+  logic rdata_valid_q;
+  logic [top_pkg::TL_DW-1:0] rdata_q;
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      rdbuf_valid_q <= 1'b0;
+      rdata_valid_q <= 1'b0;
     end else if (tl_o_int.d_valid) begin
-      if (tl_i.d_ready) rdbuf_valid_q <= 1'b0;  // Response sent.
+      if (tl_i.d_ready) rdata_valid_q <= 1'b0;  // Response sent.
       else begin
         // Capture read data and keep it stable until it is accepted by the host.
-        rdbuf_valid_q <= !tl_req_fifo_rdata.cmd_wr_not_rd;
-        if (!rdbuf_valid_q) begin
-          rdbuf_dout_q <= tl_req_fifo_rdata.cmd_fetch ? ufifo_dout_first : rdbuf_dout;
+        rdata_valid_q <= !tl_req_fifo_rdata.cmd_wr_not_rd;
+        if (!rdata_valid_q) begin
+          rdata_q <= tl_req_fifo_rdata.cmd_fetch ? ufifo_dout_first : rdbuf_dout;
         end
       end
     end
@@ -331,14 +342,14 @@ module hbmc_tl_port import tlul_pkg::*; #(
         // Otherwise wait until we have the first word of data to return.
         tl_o_int.d_valid   = |{ufifo_rd_ena & ~ufifo_rd_bursting,  // Initial word of burst read.
                                ~tl_req_fifo_rdata.cmd_fetch,  // From read buffer.
-                               rdbuf_valid_q};  // Holding read data stable until accepted.
+                               rdata_valid_q};  // Holding read data stable until accepted.
       end
     end
 
     tl_o_int.d_opcode          = tl_req_fifo_rdata.cmd_wr_not_rd ? AccessAck : AccessAckData;
     tl_o_int.d_size            = tl_req_fifo_rdata.tl_size;
     tl_o_int.d_source          = tl_req_fifo_rdata.tl_source;
-    tl_o_int.d_data            = rdbuf_valid_q ? rdbuf_dout_q :
+    tl_o_int.d_data            = rdata_valid_q ? rdata_q :
                                 (tl_req_fifo_rdata.cmd_fetch ? ufifo_dout_first : rdbuf_dout);
     tl_o_int.d_user.capability = tl_tag_bit;
     tl_o_int.a_ready           = issue;
