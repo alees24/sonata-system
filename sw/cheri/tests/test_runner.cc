@@ -37,6 +37,8 @@ extern "C" void entry_point(void *rwRoot) {
   WriteUart uart{uart0};
   Log log(uart);
 
+  hyperram_tests(root, log);
+
   pwm_tests(root, log);
   uart_tests(root, log);
   i2c_tests(root, log);

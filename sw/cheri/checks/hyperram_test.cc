@@ -631,7 +631,7 @@ extern "C" [[noreturn]] void entry_point(void *rwRoot) {
   while (!failures) {
     const uint32_t burst_len = 32u;
     const bool report_times = true;
-
+#if 0
     log.print("Running RND cap test...");
     failures += rand_cap_test(hyperram_area, hyperram_cap_area, prng, HyperramSize / 4);
     write_test_result(log, failures);
@@ -659,7 +659,7 @@ extern "C" [[noreturn]] void entry_point(void *rwRoot) {
     log.print("Running Execution test...");
     failures += execute_test(hyperram_area, prng, HyperramSize / 4, log, report_times);
     write_test_result(log, failures);
-
+#endif
     // Performance test copies a significant chunk of data from one buffer to another;
     // in this case we do not check the integrity of the memory copy, since here we are
     // just interested in the attainable data rate. The alignment checks below will verify

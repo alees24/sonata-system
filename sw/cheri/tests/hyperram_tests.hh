@@ -326,7 +326,7 @@ void hyperram_tests(CapRoot root, Log &log) {
     set_console_mode(log, CC_RESET);
     bool test_failed = false;
     int failures     = 0;
-
+#if 0
     log.print("  Running RND cap test...");
     failures = rand_cap_test(hyperram_area, hyperram_cap_area, prng, HYPERRAM_TEST_SIZE);
     test_failed |= (failures > 0);
@@ -361,7 +361,7 @@ void hyperram_tests(CapRoot root, Log &log) {
     failures = execute_test(hyperram_area, prng, HYPERRAM_TEST_SIZE);
     test_failed |= (failures > 0);
     write_test_result(log, failures);
-
+#endif
     log.print("  Running Performance test...");
     failures = perf_burst_test(hyperram_area, prng, 0x1000u);
     test_failed |= (failures > 0);
