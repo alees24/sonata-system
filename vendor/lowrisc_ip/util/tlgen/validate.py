@@ -231,7 +231,7 @@ def isOverlap(range1: Tuple[int, int], range2: Tuple[int, int]) -> bool:
 
 
 def isNotMinSpacing(range1: Tuple[int, int], range2: Tuple[int, int]) -> bool:
-    return not (range2[0] < range1[0] - MIN_DEVICE_SPACING or
+    return not (range2[0] <= range1[0] - MIN_DEVICE_SPACING or
                 range2[0] >= range1[0] + MIN_DEVICE_SPACING)
 
 

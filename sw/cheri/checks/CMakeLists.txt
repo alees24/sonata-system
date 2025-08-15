@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 set(CHECKS
   cheri_sanity.cc
+  dma_check.cc
   gpio_check.cc
   lcd_check.cc
   memory_test.cc

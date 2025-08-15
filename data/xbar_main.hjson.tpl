@@ -31,6 +31,24 @@
       xbar:  false,
       pipeline: true,
     },
+    { name: "dma_rd", // DMA read port
+      type: "host",
+      clock: "clk_sys_i",
+      reset: "rst_sys_ni",
+      req_fifo_pass: true,
+      rsp_fifo_pass: true,
+      xbar: false,
+      pipeline: false,
+    },
+    { name: "dma_wr", // DMA write port
+      type: "host",
+      clock: "clk_sys_i",
+      reset: "rst_sys_ni",
+      req_fifo_pass: true,
+      rsp_fifo_pass: true,
+      xbar: false,
+      pipeline: false,
+    },
     { name:  "sram", // Internal memory
       type:  "device",
       clock: "clk_sys_i",
@@ -119,6 +137,19 @@
       xbar:  false,
       addr_range: [{
         base_addr: "0x8000B000",
+        size_byte: "0x00001000",
+      }],
+      pipeline: true,
+    },
+    { name: "dma_cfg",  // DMA configuration
+      type: "device",
+      clock: "clk_sys_i",
+      reset: "rst_sys_ni",
+      xbar: false,
+      req_fifo_pass: false,
+      rsp_fifo_pass: false,
+      addr_range: [{
+        base_addr: "0x80002000",
         size_byte: "0x00001000",
       }],
       pipeline: true,
@@ -224,6 +255,7 @@
       "hyperram",
       "rev_tag",
       "dbg_dev",
+      "dma_cfg",
       "gpio",
       "pinmux",
       "system_info",
@@ -247,6 +279,18 @@
       "sram",
       "hyperram",
       "system_info",
+    ],
+    dma_rd: [
+      "sram",
+      "hyperram",
+      "spi0",  // Flash/SD card.
+      "spi_ethmac"
+    ],
+    dma_wr: [
+      "sram",
+      "hyperram",
+      "spi0",  // Flash/SD card.
+      "spi_ethmac"
     ],
   },
 }

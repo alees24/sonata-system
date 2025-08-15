@@ -120,7 +120,7 @@ module hbmc_tl_top import tlul_pkg::*; #(
    * command is accepted, data will be popped faster than the system clock can supply it.
    */
   localparam int unsigned DDataWidth = top_pkg::TL_DW;
-  localparam int unsigned DFIFODepth = 1 << (Log2BurstLen - ABIT);
+  localparam int unsigned DFIFODepth = 2 << (Log2BurstLen - ABIT);
 
   logic idelayctrl_rdy_sync;
   logic clk_idelay;

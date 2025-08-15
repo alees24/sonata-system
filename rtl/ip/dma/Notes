@@ -1,0 +1,52 @@
+1. Lift the address from the low capability register to start with.
+2. Retain the capability bits.
+
+
+
+1. Measure the elapsed run time/throughput.
+   20516 cycles, Both ports: pipelined, no pass
+   16380 cycles, Both ports: not pipelined, pass through
+
+   Double the depth of the dfifo; at 100MHz the CDC is causing
+   a fall in throughput but we can keep writer and reader overlapped and active
+   concurrently with more entries:
+   11476 cycles
+   The theoretical minimum is 8192 cycles for this test.
+   @200MHz -> 8212 cycles.
+
+TL-UL error signalling, and perhaps something capability-related at some point.
+
+We also have no interrupt for the DMA IP block presently.
+
+Error - we need to stop the addressing logic at this point
+  and flush the FIFO? We shall definitely want to flush the FIFO and reset all logic in response
+  to an abort, but perhaps we do this upon transition to Aborted, once the logic has reset and
+  all TL-UL responses have been received....in which case maybe an additional
+  SW_RESET would be preferable that does not wait?
+
+  Aborting is for killing a transfer, not a recovery-from-error mechanism.
+
+  Perhaps update the configuration state too?
+
+Check the read only and write only logic
+When pausing we should write to the configuration registers
+
+
+So I guess the DMA would be supplied with the normal transfer parameters as well as source
+ and destination capabilities....these are stored to the peripheral with the tag bit as
+ per a memory operation.
+
+ Source and destination capabilities must be checked against ts_map on every access
+ Capabilities are internally modified in hardware as per cincoffset instruction within
+ the CPU, and then re-checked....as soon as they become invalid an error must be raised.
+
+ We _could_ choose to validate the configuration up front; our source/destination capabilities
+ cannot themselves be altered/invalidated, just the addressed memory via revocation?
+ !We'd want two ports to the tsmap for performance reasons, but perhaps it would suffice
+ to guarantee that a small block of word reads/writes will never take longer than a certain
+ time, and then have multi-bit access?
+ 
+ Perhaps we should be updating the register file directly; if this doesn't incur latency
+   then there's no point having duplicated flops in the dma_addr module. It also gives software
+   the ability to resume after a channel change.
+

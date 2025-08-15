@@ -1,0 +1,423 @@
+// Copyright lowRISC contributors.
+// Licensed under the Apache License, Version 2.0, see LICENSE for details.
+// SPDX-License-Identifier: Apache-2.0
+
+{
+  name:               "dma",
+  human_name:         "DMA",
+  one_line_desc:      "DMA Controller",
+  one_paragraph_desc: "",
+  cip_id:             "1",
+
+  revisions: [
+  {
+    version:            "1.0.0",
+    life_stage:         "L2",
+    design_stage:       "D1",
+    verification_stage: "V1",
+    notes:              ""
+  }
+  ]
+
+  clocking: [
+    {clock: "clk_i", reset: "rst_ni", primary: true},
+  ]
+  bus_interfaces: [
+    { protocol: "tlul", direction: "device" }
+    { protocol: "tlul", direction: "host", name: "host_rd" }
+    { protocol: "tlul", direction: "host", name: "host_wr" }
+  ],
+  param_list: [
+    { name:    "SourceReadMin",
+      type:    "bit [7:0]",
+      default: "0",
+      desc:    "Minimum source ID for read port.",
+      local:   "false",
+      expose:  "true"
+    },
+    { name:    "SourceReadMax",
+      type:    "bit [7:0]",
+      default: "0",
+      desc:    "Maximum source ID for read port.",
+      local:   "false",
+      expose:  "true"
+    },
+    { name:    "SourceWriteMin",
+      type:    "bit [7:0]",
+      default: "0",
+      desc:    "Minimum source ID for write port.",
+      local:   "false",
+      expose:  "true"
+    },
+    { name:    "SourceWriteMax",
+      type:    "bit [7:0]",
+      default: "0",
+      desc:    "Maximum source ID for write port.",
+      local:   "false",
+      expose:  "true"
+    },
+    { name:    "CopyCaps",
+      type:    "bit",
+      default: "1",
+      desc:    "Copy capability tag bits from source to destination.",
+      local:   "false",
+      expose:  "true"
+    },
+    { name:    "MaxRowLen",
+      type:    "int unsigned",
+      default: "0x100000",
+      desc:    "Maximum length of rows, as words - 1.",
+      local:   "false",
+      expose:  "true"
+    },
+    { name:    "MaxRows",
+      type:    "int unsigned",
+      default: "0x10000",
+      desc:    "Maximum number of rows per transfer, as rows - 1.",
+      local:   "false",
+      expose:  "true"
+    },
+    { name:    "FIFODepth",
+      type:    "int unsigned",
+      default: "8",
+      desc:    "Number of entries in the data FIFO.",
+      local:   "false",
+      expose:  "true"
+    }
+  ],
+  interrupt_list: [
+    { name: "completed",
+      desc: '''Transfer completed and the controller is now idle.'''
+      type: "event"
+    },
+    { name: "error",
+      desc: '''Error condition(s) occurred and the controller is now idle.''',
+      type: "event"
+    }
+  ],
+  regwidth: "32",
+  registers: [
+    { name:     "CONTROL",
+      desc:     '''Controls the operation of the DMA block.''',
+      swaccess: "rw",
+      hwaccess: "hro",
+      fields: [
+        { bits: "2",
+          name: "ABORT",
+          desc: '''Set to 1 to abort an in-progress DMA transfer.''',
+          hwqe: true,
+          resval: "0x0"
+        },
+        { bits: "1",
+          name: "PAUSE",
+          desc: '''Set to 1 to pause an in-progress DMA transfer.
+                When the transfer has been paused, the configuration
+                registers will have been updated to show that current
+                state of the transfer so that it may be captured and
+                restored later.
+                ''',
+          hwqe: true,
+          resval: "0x0"
+        },
+        { bits: "0",
+          name: "START",
+          desc: '''Set to 1 to start a new DMA transfer or to resume
+                a paused transfer.
+                ''',
+          hwqe: true,
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "STATUS",
+      desc:     '''Status information about the DMA block''',
+      swaccess: "ro",
+      hwaccess: "hwo",
+      hwext:    "true",
+      fields: [
+        { bits: "31:24",
+          name: "WR_PENDING",
+          desc: '''Count of pending word writes.'''
+        },
+        { bits: "23:16",
+          name: "COMMITTED",
+          desc: '''Number of FIFO entries committed (occupied or read request sent).'''
+        },
+        { bits: "11",
+          name: "WR_ERROR",
+          desc: '''Error(s) occurred on the write side.'''        
+        },
+        { bits: "12",
+          name: "RD_ERROR",
+          desc: '''Error(s) occurred on the read side.'''
+        },
+        { bits: "9",
+          name: "WR_PAUSED",
+          desc: '''Write side paused.'''
+        },
+        { bits: "8",
+          name: "RD_PAUSED",
+          desc: '''Read side paused.'''
+        },
+        { bits: "7",
+          name: "WR_ACTIVE",
+          desc: '''Write side active.'''
+        },
+        { bits: "6",
+          name: "RD_ACTIVE",
+          desc: '''Read side active.'''
+        },
+        { bits: "5",
+          name: "WR_IDLE",
+          desc: '''Write side idle.'''
+        },
+        { bits: "4",
+          name: "RD_IDLE",
+          desc: '''Read side idle.'''
+        },
+        { bits: "3:0",
+          name: "STATE",
+          desc: '''DMA state:
+                0 : Idle
+                1 : Active
+                2 : Aborting
+                3 : Aborted
+                4 : Pausing
+                5 : Paused
+                6 : Error
+                '''
+        }
+      ]
+    },
+    { name:     "ERROR",
+      desc:     '''Error conditions.'''
+      swaccess: "ro",
+      hwaccess: "hwo",
+      fields: [
+        { bits: "3",
+          name: "WR_BUS_ERROR",
+          desc: '''Error occurred on write bus.'''
+        },
+        { bits: "2",
+          name: "RD_BUS_ERROR",
+          desc: '''Error occurred on read bus.'''
+        },
+        { bits: "1",
+          name: "WR_CAP_ERROR",
+          desc: '''Capability error on write side.'''
+        },
+        { bits: "0",
+          name: "RD_CAP_ERROR",
+          desc: '''Capability error on read side.'''
+        }
+      ]
+    },
+    { skipto: "0x20"
+    },
+    { name:     "SRC_CONFIG",
+      desc:     '''Source configuration.''',
+      swaccess: "rw",
+      hwaccess: "hro",
+      fields: [
+        { bits: "0",
+          name: "ENABLE",
+          desc: '''Enable reading from the source. If not enabled, and only
+                writing is enabled then the write data will be read from the
+                SRC_ADDR register.
+                ''',
+          resval: "0x0"
+        },
+        {
+          bits: "5:4"
+          name: "COL_INC",
+          desc: '''Column increment mode; address change after word read:
+                   00 - Don't increment.
+                   01 - Increment by one word.
+                   10 - Decrement by two words.
+                   11 - Decrement by one word.
+                ''',
+          resval: "0x1"
+        }
+      ]
+    },
+    { name:     "SRC_STATUS",
+      desc:     '''Source status information.'''
+      swaccess: "rw",
+      hwaccess: "hwo",
+      fields: [
+        // TODO: Additional status information will be required here to make the engine
+        // restartable.
+        { bits: "31:24",
+          name: "COMMITTED",
+          desc: '''Number of FIFO entries committed (occupied or read request sent).'''
+        },
+      ]
+    },
+    { name:     "SRC_CAP_LO",
+      desc:     '''Source capability (low part), or first write data value if only the
+                writing is enabled.
+                ''',
+      swaccess: "rw",
+      hwaccess: "hrw",
+      fields: [
+        { bits: "31:0",
+          name: "CAP_DATA",
+          desc: '''Low part of capability for source of data transfer.
+                   Source data value when only writing is enabled.
+                ''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "SRC_CAP_HI",
+      desc:     '''Source capability (high part), or first write data value if only the
+                writing is enabled.
+                ''',
+      swaccess: "rw",
+      hwaccess: "hrw",
+      fields: [
+        { bits: "31:0",
+          name: "CAP_DATA",
+          desc: '''High part of capability for source of data transfer.
+                   Source data value when only writing is enabled.
+                ''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "SRC_STRIDE",
+      desc:     '''Source address stride.''',
+      swaccess: "rw",
+      hwaccess: "hro",
+      fields: [
+        { bits: "31:0",
+          name: "STRIDE",
+          desc: '''Address delta from the end of one row to the start of the next row.''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "SRC_ROW_LEN",
+      desc:     '''Source row length, as words - 1.''',
+      swaccess: "rw",
+      hwaccess: "hrw",
+      fields: [
+        { bits: "19:0",
+          name: "ROW_LEN",
+          desc: '''''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "SRC_ROWS",
+      desc:     '''Source row count, as rows - 1.''',
+      swaccess: "rw",
+      hwaccess: "hrw",
+      fields: [
+        { bits: "15:0",
+          name: "ROWS",
+          desc: '''''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { skipto: "0x40"
+    },
+    { name:     "DST_CONFIG",
+      desc:     '''Destination configuration.''',
+      swaccess: "rw",
+      hwaccess: "hro",
+      fields: [
+        { bits: "0",
+          name: "ENABLE",
+          desc: '''''',
+          resval: "0x0"
+        },
+        {
+          bits: "5:4"
+          name: "COL_INC",
+          desc: '''Column increment mode; address change after word write:
+                   00 - Don't increment.
+                   01 - Increment by one word.
+                   10 - Decrement by two words.
+                   11 - Decrement by one word.
+                ''',
+          resval: "0x1"
+        }
+      ]
+    },
+    { name:     "DST_STATUS",
+      desc:     '''Destination status information.''',
+      swaccess: "rw",
+      hwaccess: "hwo",
+      fields: [
+        // TODO: Additional status information will be required here to make the engine
+        // restartable.
+        { bits: "31:24",
+          name: "WR_PENDING",
+          desc: '''Count of pending word writes.'''
+        },
+      ]
+    },
+    { name:     "DST_CAP_LO",
+      desc:     '''Destination capability (low part).''',
+      swaccess: "rw",
+      hwaccess: "hrw",
+      fields: [
+        { bits: "31:0",
+          name: "CAP",
+          desc: '''Low part of capability for destination of data transfer.''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "DST_CAP_HI",
+      desc:     '''Destination capability (high part).''',
+      swaccess: "rw",
+      hwaccess: "hrw",
+      fields: [
+        { bits: "31:0",
+          name: "CAP",
+          desc: '''High part of capability for destination of data transfer.''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "DST_STRIDE",
+      desc:     '''Destination address stride.''',
+      swaccess: "rw",
+      hwaccess: "hro",
+      fields: [
+        { bits: "31:0",
+          name: "STRIDE",
+          desc: '''Address delta from the end of one row to the start of the next row.''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "DST_ROW_LEN",
+      desc:     '''Destination row length, as words - 1.''',
+      swaccess: "rw",
+      hwaccess: "hrw",
+      fields: [
+        { bits: "19:0",
+          name: "ROW_LEN",
+          desc: '''''',
+          resval: "0x0"
+        }
+      ]
+    },
+    { name:     "DST_ROWS",
+      desc:     '''Destination row count, as rows - 1.''',
+      swaccess: "rw",
+      hwaccess: "hrw",
+      fields: [
+        { bits: "15:0",
+          name: "ROWS",
+          desc: '''''',
+          resval: "0x0"
+        }
+      ]
+    }
+  ]
+}

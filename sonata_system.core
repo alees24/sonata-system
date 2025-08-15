@@ -15,6 +15,7 @@ filesets:
       - lowrisc:ip:usbdev
       - lowrisc:ip:xbar_main
       - lowrisc:ip:xbar_ifetch
+      - lowrisc:ip:dma
       - lowrisc:ip:spi
       - lowrisc:ip:gpio
       - lowrisc:ip:pwm

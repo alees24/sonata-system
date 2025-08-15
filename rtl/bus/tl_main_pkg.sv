@@ -14,6 +14,7 @@ package tl_main_pkg;
   localparam logic [31:0] ADDR_SPACE_RGBLED_CTRL = 32'h 80009000;
   localparam logic [31:0] ADDR_SPACE_HW_REV      = 32'h 8000a000;
   localparam logic [31:0] ADDR_SPACE_XADC        = 32'h 8000b000;
+  localparam logic [31:0] ADDR_SPACE_DMA_CFG     = 32'h 80002000;
   localparam logic [31:0] ADDR_SPACE_SYSTEM_INFO = 32'h 8000c000;
   localparam logic [31:0] ADDR_SPACE_TIMER       = 32'h 80040000;
   localparam logic [31:0] ADDR_SPACE_SPI_LCD     = 32'h 80300000;
@@ -39,6 +40,7 @@ package tl_main_pkg;
   localparam logic [31:0] ADDR_MASK_RGBLED_CTRL = 32'h 00000fff;
   localparam logic [31:0] ADDR_MASK_HW_REV      = 32'h 00000fff;
   localparam logic [31:0] ADDR_MASK_XADC        = 32'h 00000fff;
+  localparam logic [31:0] ADDR_MASK_DMA_CFG     = 32'h 00000fff;
   localparam logic [31:0] ADDR_MASK_SYSTEM_INFO = 32'h 00000fff;
   localparam logic [31:0] ADDR_MASK_TIMER       = 32'h 0000ffff;
   localparam logic [31:0] ADDR_MASK_SPI_LCD     = 32'h 00000fff;
@@ -56,8 +58,8 @@ package tl_main_pkg;
   localparam logic [31:0] ADDR_MASK_DBG_DEV     = 32'h 00000fff;
   localparam logic [31:0] ADDR_MASK_RV_PLIC     = 32'h 07ffffff;
 
-  localparam int N_HOST   = 2;
-  localparam int N_DEVICE = 24;
+  localparam int N_HOST   = 4;
+  localparam int N_DEVICE = 25;
 
   typedef enum int {
     TlSram = 0,
@@ -68,27 +70,30 @@ package tl_main_pkg;
     TlRgbledCtrl = 5,
     TlHwRev = 6,
     TlXadc = 7,
-    TlSystemInfo = 8,
-    TlTimer = 9,
-    TlSpiLcd = 10,
-    TlSpiEthmac = 11,
-    TlPwm0 = 12,
-    TlUart0 = 13,
-    TlUart1 = 14,
-    TlUart2 = 15,
-    TlI2C0 = 16,
-    TlI2C1 = 17,
-    TlSpi0 = 18,
-    TlSpi1 = 19,
-    TlSpi2 = 20,
-    TlUsbdev = 21,
-    TlDbgDev = 22,
-    TlRvPlic = 23
+    TlDmaCfg = 8,
+    TlSystemInfo = 9,
+    TlTimer = 10,
+    TlSpiLcd = 11,
+    TlSpiEthmac = 12,
+    TlPwm0 = 13,
+    TlUart0 = 14,
+    TlUart1 = 15,
+    TlUart2 = 16,
+    TlI2C0 = 17,
+    TlI2C1 = 18,
+    TlSpi0 = 19,
+    TlSpi1 = 20,
+    TlSpi2 = 21,
+    TlUsbdev = 22,
+    TlDbgDev = 23,
+    TlRvPlic = 24
   } tl_device_e;
 
   typedef enum int {
     TlIbexLsu = 0,
-    TlDbgHost = 1
+    TlDbgHost = 1,
+    TlDmaRd = 2,
+    TlDmaWr = 3
   } tl_host_e;
 
 endpackage

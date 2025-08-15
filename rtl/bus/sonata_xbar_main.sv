@@ -19,6 +19,10 @@ module sonata_xbar_main
   output tlul_pkg::tl_d2h_t tl_ibex_lsu_o,
   input  tlul_pkg::tl_h2d_t tl_dbg_host_i,
   output tlul_pkg::tl_d2h_t tl_dbg_host_o,
+  input  tlul_pkg::tl_h2d_t tl_dma_rd_i,
+  output tlul_pkg::tl_d2h_t tl_dma_rd_o,
+  input  tlul_pkg::tl_h2d_t tl_dma_wr_i,
+  output tlul_pkg::tl_d2h_t tl_dma_wr_o,
 
   // Device interfaces
   output tlul_pkg::tl_h2d_t tl_sram_o,
@@ -27,6 +31,8 @@ module sonata_xbar_main
   input  tlul_pkg::tl_d2h_t tl_hyperram_i,
   output tlul_pkg::tl_h2d_t tl_rev_tag_o,
   input  tlul_pkg::tl_d2h_t tl_rev_tag_i,
+  output tlul_pkg::tl_h2d_t tl_dma_cfg_o,
+  input  tlul_pkg::tl_d2h_t tl_dma_cfg_i,
   output tlul_pkg::tl_h2d_t tl_gpio_o,
   input  tlul_pkg::tl_d2h_t tl_gpio_i,
   output tlul_pkg::tl_h2d_t tl_pinmux_o,
@@ -73,6 +79,10 @@ module sonata_xbar_main
     .tl_ibex_lsu_o    (tl_ibex_lsu_o),
     .tl_dbg_host_i    (tl_dbg_host_i),
     .tl_dbg_host_o    (tl_dbg_host_o),
+    .tl_dma_rd_i      (tl_dma_rd_i),
+    .tl_dma_rd_o      (tl_dma_rd_o),
+    .tl_dma_wr_i      (tl_dma_wr_i),
+    .tl_dma_wr_o      (tl_dma_wr_o),
 
     // Device interfaces.
     .tl_sram_o        (tl_sram_o),
@@ -81,6 +91,8 @@ module sonata_xbar_main
     .tl_hyperram_i    (tl_hyperram_i),
     .tl_rev_tag_o     (tl_rev_tag_o),
     .tl_rev_tag_i     (tl_rev_tag_i),
+    .tl_dma_cfg_o     (tl_dma_cfg_o),
+    .tl_dma_cfg_i     (tl_dma_cfg_i),
     .tl_gpio_o        (tl_gpio_o),
     .tl_gpio_i        (tl_gpio_i),
     .tl_pinmux_o      (tl_pinmux_o),

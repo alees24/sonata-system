@@ -160,6 +160,7 @@ module sonata_system
   logic         hardware_revoker_irq;
 
   // Interrupts.
+  localparam int unsigned DmaIrqs    = 2;
   localparam int unsigned I2cIrqs    = 15;
   localparam int unsigned SpiIrqs    = 5;
   localparam int unsigned UartIrqs   = 9;
@@ -168,6 +169,7 @@ module sonata_system
   logic timer_irq;
   logic external_irq;
 
+  logic [DmaIrqs-1:0]    dma_interrupts;
   logic [I2cIrqs-1:0]    i2c_interrupts [I2C_NUM];
   logic [SpiIrqs-1:0]    spi_interrupts [TotalSpiNum];
   logic [UartIrqs-1:0]   uart_interrupts[UART_NUM];
@@ -178,13 +180,16 @@ module sonata_system
 
   // Each IP block has a single interrupt line to the PLIC and software shall consult the intr_state
   // register within the block itself to identify the interrupt source(s).
-  logic [I2C_NUM-1:0]  i2c_irq;
-  logic [TotalSpiNum-1:0]  spi_irq;
-  logic [UART_NUM-1:0] uart_irq;
-  logic                usbdev_irq;
-  logic                gpio_irq;
+  logic                   dma_irq;
+  logic [I2C_NUM-1:0]     i2c_irq;
+  logic [TotalSpiNum-1:0] spi_irq;
+  logic [UART_NUM-1:0]    uart_irq;
+  logic                   usbdev_irq;
+  logic                   gpio_irq;
 
   always_comb begin
+    // Single interrupt line for DMA engine.
+    dma_irq = |dma_interrupts;
     // Single interrupt line per UART.
     for (int i = 0; i < UART_NUM; i++) begin
       uart_irq[i] = |uart_interrupts[i];
@@ -215,7 +220,8 @@ module sonata_system
   assign intr_vector[15 + I2C_NUM     : 16              ] = i2c_irq;
   assign intr_vector[15               :  8 + UART_NUM   ] = 'b0;
   assign intr_vector[ 7 + UART_NUM    :  8              ] = uart_irq; // Support up to 8 UARTs.
-  assign intr_vector[ 7               :  5              ] = 3'h0;     // Reserved for future use.
+  assign intr_vector[ 7               :  6              ] = 2'h0;     // Reserved for future use.
+  assign intr_vector[ 5                                 ] = dma_irq;
   assign intr_vector[ 4                                 ] = gpio_irq;
   assign intr_vector[ 3                                 ] = usbdev_irq;
   assign intr_vector[ 2                                 ] = ethmac_irq;
@@ -292,12 +298,18 @@ module sonata_system
   tlul_pkg::tl_d2h_t tl_ibex_lsu_d2h;
   tlul_pkg::tl_h2d_t tl_dbg_host_h2d;
   tlul_pkg::tl_d2h_t tl_dbg_host_d2h;
+  tlul_pkg::tl_h2d_t tl_dma_rd_h2d;
+  tlul_pkg::tl_d2h_t tl_dma_rd_d2h;
+  tlul_pkg::tl_h2d_t tl_dma_wr_h2d;
+  tlul_pkg::tl_d2h_t tl_dma_wr_d2h;
 
   // Device interfaces.
   tlul_pkg::tl_h2d_t tl_sram_a_h2d;
   tlul_pkg::tl_d2h_t tl_sram_a_d2h;
   tlul_pkg::tl_h2d_t tl_sram_b_h2d;
   tlul_pkg::tl_d2h_t tl_sram_b_d2h;
+  tlul_pkg::tl_h2d_t tl_dma_cfg_h2d;
+  tlul_pkg::tl_d2h_t tl_dma_cfg_d2h;
   tlul_pkg::tl_h2d_t tl_hyperram_h2d[2];
   tlul_pkg::tl_d2h_t tl_hyperram_d2h[2];
   tlul_pkg::tl_h2d_t tl_gpio_h2d;
@@ -349,10 +361,16 @@ module sonata_system
     .tl_ibex_lsu_o    (tl_ibex_lsu_d2h),
     .tl_dbg_host_i    (tl_dbg_host_h2d),
     .tl_dbg_host_o    (tl_dbg_host_d2h),
+    .tl_dma_rd_i      (tl_dma_rd_h2d),
+    .tl_dma_rd_o      (tl_dma_rd_d2h),
+    .tl_dma_wr_i      (tl_dma_wr_h2d),
+    .tl_dma_wr_o      (tl_dma_wr_d2h),
 
     // Device interfaces.
     .tl_sram_o        (tl_sram_a_h2d),
     .tl_sram_i        (tl_sram_a_d2h),
+    .tl_dma_cfg_o     (tl_dma_cfg_h2d),
+    .tl_dma_cfg_i     (tl_dma_cfg_d2h),
     .tl_hyperram_o    (tl_hyperram_h2d[0]),
     .tl_hyperram_i    (tl_hyperram_d2h[0]),
     .tl_rev_tag_o     (tl_rev_tag_h2d),
@@ -1174,7 +1192,7 @@ module sonata_system
   dm_top #(
     .NrHarts      ( 1                              ),
     .IdcodeValue  ( jtag_id_pkg::RV_DM_JTAG_IDCODE )
-  ) u_dm_top (
+  ) u_dm_top(
     .clk_i          (clk_sys_i),
     .rst_ni         (rst_sys_ni),
     .testmode_i     (1'b0),
@@ -1212,6 +1230,28 @@ module sonata_system
 
   // Debug module is not capability-aware.
   assign host_wcap[DbgHost] = 1'b0;
+
+  // DMA
+  dma u_dma(
+    .clk_i            (clk_sys_i),
+    .rst_ni           (rst_sys_ni),
+
+    // Register interface
+    .tl_i             (tl_dma_cfg_h2d),
+    .tl_o             (tl_dma_cfg_d2h),
+
+    // Host read port
+    .host_rd_o        (tl_dma_rd_h2d),
+    .host_rd_i        (tl_dma_rd_d2h),
+
+    // Host write port
+    .host_wr_o        (tl_dma_wr_h2d),
+    .host_wr_i        (tl_dma_wr_d2h),
+
+    // Interrupts
+    .intr_completed_o (dma_interrupts[0]),
+    .intr_error_o     (dma_interrupts[1])
+  );
 
   system_info #(
     .SysClkFreq (   SysClkFreq ),
